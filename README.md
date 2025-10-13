@@ -1,6 +1,10 @@
 # Ansible_Collection_TP-Link_Switches
 
+## start
+Me not making a fool out of me
 
+## second
+The guide stays in place until im smarter
 
 ## Getting started
 
