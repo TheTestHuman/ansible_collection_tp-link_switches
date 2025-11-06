@@ -1,0 +1,5 @@
+{% set ports_list = [] -%}
+{% for port in range(1, total_ports + 1) -%}
+  {% set _ = ports_list.append({'port': port, 'enabled': true}) -%}
+{% endfor -%}
+{{ ports_list | to_nice_yaml }}

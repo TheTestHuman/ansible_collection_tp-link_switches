@@ -1,0 +1,28 @@
+# Ansible
+*.retry
+.ansible/
+
+#Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Sensible Daten - Nicht comitten!
+inventory/group_vars/vault.yml
+*_vault.yml
+*.secret
+*.key
+
+# Backup-Dateien
+*~
+*.bak
+*.swp
+.DS_Store
+
+# Logs
+*.log
+
+# Temporäre Dateien
+tmp/
+temp/

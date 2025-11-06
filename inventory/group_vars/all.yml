@@ -1,0 +1,26 @@
+---
+ansible_connection: local
+ansible_python_interpreter: /usr/bin/python3
+
+management_host_ip: "{{ vault_management_host_ip }}"
+admin_username: "{{ vault_management_host_ip }}"
+admin_password: "neinnein"
+
+common_vlans:
+  - id: 1
+    name: "Default"
+  - id: 10
+    name: "Management"
+  - id: 20
+    name: "Clients"
+  - id: 30
+    name: "Guests"
+  - id: 40
+    name: "IoT"
+
+default_port_roles:
+  management_trunk: 1
+  management_access: [2]
+  clients: [3, 4]
+  guests: [5, 6]
+  iot: [7, 8]

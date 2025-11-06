@@ -1,0 +1,44 @@
+{% set vlans_list = [] -%}
+{% for vlan in all_vlans -%}
+  {% set tagged = [] -%}
+  {% set untagged = [] -%}
+  
+  {# Management Trunk Port bekommt alle VLANs tagged #}
+  {% if port_roles.management_trunk -%}
+    {% set _ = tagged.append(port_roles.management_trunk) -%}
+  {% endif -%}
+  
+  {# Optionaler Uplink #}
+  {% if port_roles.get('uplink') -%}
+    {% set _ = tagged.append(port_roles.uplink) -%}
+  {% endif -%}
+  
+  {# VLAN-spezifische Ports #}
+  {% if vlan.id == 10 -%}
+    {% for port in port_roles.management_access -%}
+      {% set _ = untagged.append(port) -%}
+    {% endfor -%}
+  {% elif vlan.id == 20 -%}
+    {% for port in port_roles.clients -%}
+      {% set _ = untagged.append(port) -%}
+    {% endfor -%}
+  {% elif vlan.id == 30 -%}
+    {% for port in port_roles.guests -%}
+      {% set _ = untagged.append(port) -%}
+    {% endfor -%}
+  {% elif vlan.id == 40 -%}
+    {% for port in port_roles.iot -%}
+      {% set _ = untagged.append(port) -%}
+    {% endfor -%}
+  {% endif -%}
+  
+  {% set vlan_config = {'vlan_id': vlan.id, 'name': vlan.name} -%}
+  {% if tagged -%}
+    {% set _ = vlan_config.update({'tagged_ports': tagged}) -%}
+  {% endif -%}
+  {% if untagged -%}
+    {% set _ = vlan_config.update({'untagged_ports': untagged}) -%}
+  {% endif -%}
+  {% set _ = vlans_list.append(vlan_config) -%}
+{% endfor -%}
+{{ vlans_list | to_yaml }}
