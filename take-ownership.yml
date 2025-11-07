@@ -1,5 +1,5 @@
 ---
-- hosts: switch
+- hosts: switches
   name: Take ownership of TP-Link Switch
   gather_facts: no
   connection: local
@@ -7,6 +7,6 @@
     - name: Take ownership of the switch
       rgl.tp_link_easy_smart_switch.smrt_take_ownership:
         username: admin
-        password: "{{ smrt_admin_password }}"
+        password: neinnein
         switch_ip_address: "{{ smrt_ip_address }}"
         switch_mac_address: "{{ smrt_mac_address }}"

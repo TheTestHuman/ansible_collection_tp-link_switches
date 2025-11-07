@@ -2,8 +2,8 @@
 ansible_connection: local
 ansible_python_interpreter: /usr/bin/python3
 
-management_host_ip: "{{ vault_management_host_ip }}"
-admin_username: "{{ vault_management_host_ip }}"
+management_host_ip: "192.168.0.15"
+admin_username: "admin"
 admin_password: "neinnein"
 
 common_vlans:

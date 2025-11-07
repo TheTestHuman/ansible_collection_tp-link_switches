@@ -13,6 +13,7 @@ inventory/group_vars/vault.yml
 *_vault.yml
 *.secret
 *.key
+.vault_pass
 
 # Backup-Dateien
 *~
