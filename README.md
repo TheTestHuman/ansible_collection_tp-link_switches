@@ -33,7 +33,7 @@ ansible-galaxy collection install rgl.tp_link_easy_smart_switch
 
 ### 2. Repository klonen
 ```bash
-git clone https://git.ide3.de/dein-username/ansible_collection_tp-link_switches.git
+git clone https://git.ide3.de/bemet002/ansible_collection_tp-link_switches.git
 cd ansible_collection_tp-link_switches
 ```
 
