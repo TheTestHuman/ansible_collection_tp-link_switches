@@ -1,0 +1,21 @@
+---
+# Ansible Connection Settings
+ansible_connection: network_cli
+ansible_network_os: generic  # Wird angepasst wenn wir CLI kennen
+ansible_user: "admin"
+ansible_password: "neinnein"
+ansible_become: yes
+ansible_become_method: enable
+
+# VLAN Configuration
+common_vlans:
+  - id: 1
+    name: "Default"
+  - id: 10
+    name: "Management"
+  - id: 20
+    name: "Clients"
+  - id: 30
+    name: "Guests"
+  - id: 40
+    name: "IoT"

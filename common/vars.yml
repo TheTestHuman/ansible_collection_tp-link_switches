@@ -1,0 +1,10 @@
+---
+# Gemeinsame Variablen für beide Switch-Typen
+project_name: "TP-Link Switch Management"
+admin_username: "admin"
+admin_password: "neinnein"
+
+# Netzwerk-Bereiche
+easy_smart_network: "192.168.0.0/24"
+managed_network_sg3210: "10.0.10.0/24"
+managed_network_sg108: "10.0.8.0/24"

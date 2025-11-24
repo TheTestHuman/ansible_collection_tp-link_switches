@@ -1,0 +1,19 @@
+---
+# Switch Identification
+switch_mac_address: "BC:07:1D:8F:AD:50"
+switch_ip_address: "10.0.10.1"
+switch_netmask: "255.255.255.0"
+switch_gateway: "10.0.10.254"
+
+# Port Roles
+port_roles:
+  management_trunk: 1
+  management_access: [2]
+  clients: [3, 4]
+  guests: [5, 6]
+  iot: [7, 8]
+  # Ports 9-10 haben keine SFP - separate Konfiguration nötig
+
+# CLI Information (wird nach Exploration gefüllt)
+cli_type: "telnet"  # oder "ssh" wenn aktiviert
+cli_prompt: ">"     # Standard-Prompt (wird angepasst)
