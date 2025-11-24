@@ -7,3 +7,8 @@ all:
           ansible_host: 192.168.0.1
           switch_model: "TL-SG108E"
           total_ports: 8
+
+        switch-sg3210:
+          ansible_host: 192.168.0.1  # Temporär für Take Ownership
+          switch_model: "TL-SG3210"
+          total_ports: 10
