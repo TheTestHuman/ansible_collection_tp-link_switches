@@ -7,6 +7,9 @@ ansible_password: "neinnein"
 ansible_become: yes
 ansible_become_method: enable
 
+#SSH Settings
+ansible_ssh_common_args: '-o PubkeyAuthentication=no'
+
 # VLAN Configuration
 common_vlans:
   - id: 1
