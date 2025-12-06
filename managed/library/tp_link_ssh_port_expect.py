@@ -41,7 +41,7 @@ options:
 def create_port_expect_script(host, username, password, port, mode, access_vlan=None, trunk_vlans=None):
     """Generate expect script for port configuration"""
     
-    # Build configuration commands
+    # Build configuration commands based on SG3210 CLI syntax
     commands = []
     
     if mode == 'access':
@@ -49,8 +49,8 @@ def create_port_expect_script(host, username, password, port, mode, access_vlan=
             raise ValueError("access_vlan required for access mode")
         commands = [
             f"interface gigabitEthernet 1/0/{port}",
-            "switchport mode access",
-            f"switchport access vlan {access_vlan}",
+            f"switchport general allowed vlan {access_vlan} untagged",
+            f"switchport pvid {access_vlan}",
             "exit"
         ]
     elif mode == 'trunk':
@@ -58,8 +58,7 @@ def create_port_expect_script(host, username, password, port, mode, access_vlan=
             raise ValueError("trunk_vlans required for trunk mode")
         commands = [
             f"interface gigabitEthernet 1/0/{port}",
-            "switchport mode trunk",
-            f"switchport trunk allowed vlan add {trunk_vlans}",
+            f"switchport general allowed vlan {trunk_vlans} tagged",
             "exit"
         ]
     

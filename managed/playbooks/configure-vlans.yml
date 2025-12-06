@@ -7,7 +7,7 @@
   vars:
     switch_host: "{{ switch_ip_address }}"
     switch_user: "admin"
-    switch_pass: "{{ admin_password }}"
+    switch_pass: "neinnein"
   
   tasks:
     - name: Create VLANs

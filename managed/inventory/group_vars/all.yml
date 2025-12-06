@@ -1,13 +1,11 @@
 ---
-# Ansible Connection Settings
-ansible_connection: network_cli
-ansible_network_os: generic  # Wird angepasst wenn wir CLI kennen
-ansible_user: "admin"
-ansible_password: "neinnein"
-ansible_become: yes
-ansible_become_method: enable
+# Ansible Connection Settings (für Custom Expect-Module nicht benötigt)
+# ansible_connection: network_cli
+# ansible_network_os: generic
+# ansible_become: yes
+# ansible_become_method: enable
 
-#SSH Settings
+# SSH Settings
 ansible_ssh_common_args: '-o PubkeyAuthentication=no'
 
 # VLAN Configuration
