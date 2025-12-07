@@ -1,0 +1,52 @@
+---
+- name: Take Ownership of Factory-Reset SG3210 Switch
+  hosts: localhost
+  gather_facts: no
+  
+  vars:
+    # Default values for factory-reset switch
+    factory_default_ip: "192.168.0.1"
+    factory_default_user: "admin"
+    factory_default_password: "admin"
+    
+    # New configuration
+    switch_new_password: "neinnein"
+    switch_new_ip: "10.0.10.1"
+    switch_new_netmask: "255.255.255.0"
+    switch_new_gateway: "10.0.10.254"
+    
+  tasks:
+    - name: Configure factory-reset switch
+      tp_link_take_ownership:
+        default_ip: "{{ factory_default_ip }}"
+        default_user: "{{ factory_default_user }}"
+        default_password: "{{ factory_default_password }}"
+        new_password: "{{ switch_new_password }}"
+        new_ip: "{{ switch_new_ip }}"
+        new_netmask: "{{ switch_new_netmask }}"
+        new_gateway: "{{ switch_new_gateway }}"
+        enable_ssh: true
+      register: ownership_result
+      
+    - name: Display result
+      debug:
+        var: ownership_result
+        
+    - name: Wait for switch to be reachable on new IP
+      wait_for:
+        host: "{{ switch_new_ip }}"
+        port: 22
+        delay: 10
+        timeout: 60
+      when: ownership_result.new_config.ssh_enabled
+      
+    - name: Test SSH connection to new IP
+      command: ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=5 {{ factory_default_user }}@{{ switch_new_ip }} "show version"
+      register: ssh_test
+      ignore_errors: yes
+      when: ownership_result.new_config.ssh_enabled
+      
+    - name: SSH test result
+      debug:
+        msg: "SSH connection successful!"
+      when: ssh_test is defined and ssh_test.rc == 0
