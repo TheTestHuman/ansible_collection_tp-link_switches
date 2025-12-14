@@ -1,0 +1,41 @@
+---
+- name: Configure Link Aggregation (LAG) on SG3210
+  hosts: managed_switches
+  gather_facts: no
+  connection: local
+  
+  vars:
+    switch_host: "{{ ansible_host }}"
+    switch_user: "admin"
+    switch_pass: "neinnein"
+    
+  tasks:
+    - name: Create LAG 1 with Port 9 and 10 (LACP Active)
+      tp_link_lag_expect:
+        host: "{{ switch_host }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_pass }}"
+        lag_id: 1
+        ports: [9, 10]
+        mode: active
+        state: present
+      register: lag_result
+      
+    - name: Display LAG configuration result
+      debug:
+        var: lag_result
+        
+    - name: Summary
+      debug:
+        msg:
+          - "================================================"
+          - "LAG Configuration Completed"
+          - "================================================"
+          - "LAG ID: {{ lag_result.lag.lag_id }}"
+          - "Ports: {{ lag_result.lag.ports | join(', ') }}"
+          - "Mode: {{ lag_result.lag.mode }}"
+          - "Status: {{ lag_result.msg }}"
+          - "================================================"
+          - ""
+          - "Verify with: show etherchannel summary"
+          - "         or: show etherchannel {{ lag_result.lag.lag_id }} detail"
