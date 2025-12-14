@@ -11,7 +11,7 @@
     
     - name: Build port configuration
       set_fact:
-        port_config: "{{ lookup('template', 'templates/port_config.j2') | from_yaml }}"
+        port_config: "{{ lookup('template', '~/ansible_collection_tp-link_switches/easy_smart/templates/port_config.j2') | from_yaml }}"
     
     - name: Build VLAN configuration directly
       set_fact:
