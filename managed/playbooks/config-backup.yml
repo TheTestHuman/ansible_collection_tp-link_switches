@@ -1,0 +1,60 @@
+---
+- name: Configuration Backup and Restore (Local)
+  hosts: managed_switches
+  gather_facts: no
+  connection: local
+  
+  vars:
+    switch_host: "{{ ansible_host }}"
+    switch_user: "admin"
+    switch_pass: "neinnein"
+    
+  tasks:
+    - name: Create local backup from running-config
+      tp_link_config_backup:
+        host: "{{ switch_host }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_pass }}"
+        action: backup
+        source: running-config
+      register: backup_result
+      tags: ['backup']
+      
+    - name: Display backup result
+      debug:
+        var: backup_result
+      tags: ['backup']
+      
+    - name: Restore configuration from backup (to startup-config)
+      tp_link_config_backup:
+        host: "{{ switch_host }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_pass }}"
+        action: restore
+        destination: startup-config
+      register: restore_result
+      tags: ['restore']
+      when: false  # Set to true to enable restore
+      
+    - name: Display restore result
+      debug:
+        var: restore_result
+      tags: ['restore']
+      when: restore_result is defined
+      
+    - name: Summary
+      debug:
+        msg:
+          - "================================================"
+          - "Configuration Backup/Restore Summary"
+          - "================================================"
+          - "Backup created: {{ backup_result.msg | default('Not executed') }}"
+          - "Backup location: On-switch backup-config"
+          - ""
+          - "To restore configuration:"
+          - "  1. Edit this playbook: set 'when: false' to 'when: true'"
+          - "  2. Run: ansible-playbook playbooks/config-backup.yml --tags restore"
+          - ""
+          - "⚠️  WARNING: Restore will overwrite current configuration!"
+          - "================================================"
+      tags: ['always']

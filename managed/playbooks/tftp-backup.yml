@@ -1,0 +1,78 @@
+---
+- name: Configuration Backup via TFTP
+  hosts: managed_switches
+  gather_facts: no
+  connection: local
+  
+  vars:
+    switch_host: "{{ ansible_host }}"
+    switch_user: "admin"
+    switch_pass: "neinnein"
+    tftp_server_ip: "192.168.0.15"  # Change to your TFTP server IP
+    
+  tasks:
+    - name: Backup startup-config to TFTP server
+      tp_link_tftp_backup:
+        host: "{{ switch_host }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_pass }}"
+        tftp_server: "{{ tftp_server_ip }}"
+        action: backup
+        config_type: startup-config
+        auto_timestamp: true
+      register: tftp_backup_result
+      tags: ['backup']
+      
+    - name: Display backup result
+      debug:
+        msg:
+          - "TFTP Backup completed"
+          - "Server: {{ tftp_backup_result.tftp_info.tftp_server }}"
+          - "Filename: {{ tftp_backup_result.tftp_info.filename }}"
+          - "Config Type: {{ tftp_backup_result.tftp_info.config_type }}"
+      tags: ['backup']
+      
+    - name: Restore configuration from TFTP
+      tp_link_tftp_backup:
+        host: "{{ switch_host }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_pass }}"
+        tftp_server: "{{ tftp_server_ip }}"
+        action: restore
+        config_type: startup-config
+        filename: "switch-backup.txt"  # Set to your backup filename
+        auto_timestamp: false
+      register: tftp_restore_result
+      tags: ['restore']
+      when: false  # Set to true to enable restore
+      
+    - name: Display restore result
+      debug:
+        var: tftp_restore_result
+      tags: ['restore']
+      when: tftp_restore_result is defined
+      
+    - name: Important Notes
+      debug:
+        msg:
+          - "================================================"
+          - "TFTP Backup/Restore Configuration"
+          - "================================================"
+          - ""
+          - "📋 Prerequisites:"
+          - "  - TFTP server must be running on {{ tftp_server_ip }}"
+          - "  - TFTP root directory must be writable"
+          - "  - Firewall must allow TFTP (UDP port 69)"
+          - ""
+          - "💾 Backup:"
+          - "  Run: ansible-playbook playbooks/tftp-backup.yml --tags backup"
+          - "  Files saved with timestamp: switch-10.0.10.1-startup-config-YYYYMMDD-HHMMSS.txt"
+          - ""
+          - "🔄 Restore:"
+          - "  1. Set correct filename in playbook"
+          - "  2. Set 'when: false' to 'when: true'"
+          - "  3. Run: ansible-playbook playbooks/tftp-backup.yml --tags restore"
+          - ""
+          - "⚠️  WARNING: Restore will overwrite current configuration!"
+          - "================================================"
+      tags: ['always']
