@@ -11,28 +11,30 @@ module: tp_link_ssh_vlan_expect
 short_description: Manage VLANs on TP-Link SG3210 via SSH using expect
 '''
 
-def create_vlan_expect_script(host, username, password, vlan_id, vlan_name):
+def create_vlan_expect_script(host, username, password, vlan_id, vlan_name,
+                               hostname, user_prompt, enable_prompt, config_prompt,
+                               vlan_prompt, save_success_msg):
     """Generate expect script"""
     script = f'''#!/usr/bin/expect -f
 set timeout 30
 spawn ssh -o PubkeyAuthentication=no {username}@{host}
 expect "password:"
 send "{password}\\r"
-expect "SG3210>"
+expect "{hostname}{user_prompt}"
 send "enable\\r"
-expect "SG3210#"
+expect "{hostname}{enable_prompt}"
 send "configure\\r"
-expect "SG3210(config)#"
+expect "{hostname}{config_prompt}"
 send "vlan {vlan_id}\\r"
-expect "SG3210(config-vlan)#"
+expect "{hostname}{vlan_prompt}"
 send "name {vlan_name}\\r"
-expect "SG3210(config-vlan)#"
+expect "{hostname}{vlan_prompt}"
 send "exit\\r"
-expect "SG3210(config)#"
+expect "{hostname}{config_prompt}"
 send "exit\\r"
-expect "SG3210#"
+expect "{hostname}{enable_prompt}"
 send "copy running-config startup-config\\r"
-expect "OK!"
+expect "{save_success_msg}"
 send "exit\\r"
 expect eof
 '''
@@ -46,6 +48,13 @@ def main():
             password=dict(type='str', required=True, no_log=True),
             vlan_id=dict(type='int', required=True),
             vlan_name=dict(type='str', required=True),
+            # Flexible Prompts
+            hostname=dict(type='str', required=False, default='SG3210'),
+            user_prompt=dict(type='str', required=False, default='>'),
+            enable_prompt=dict(type='str', required=False, default='#'),
+            config_prompt=dict(type='str', required=False, default='(config)#'),
+            vlan_prompt=dict(type='str', required=False, default='(config-vlan)#'),
+            save_success_msg=dict(type='str', required=False, default='Saving user config OK!'),
         ),
         supports_check_mode=False
     )
@@ -56,7 +65,13 @@ def main():
         module.params['username'],
         module.params['password'],
         module.params['vlan_id'],
-        module.params['vlan_name']
+        module.params['vlan_name'],
+        module.params['hostname'],
+        module.params['user_prompt'],
+        module.params['enable_prompt'],
+        module.params['config_prompt'],
+        module.params['vlan_prompt'],
+        module.params['save_success_msg']
     )
     
     # Write to temp file

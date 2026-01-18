@@ -1,0 +1,16 @@
+---
+# Globale Konfiguration für alle Hosts
+
+# Ansible Connection Settings
+ansible_connection: local
+ansible_python_interpreter: /usr/bin/python3
+
+# SSH Settings (für Expect-Module)
+ansible_ssh_common_args: '-o PubkeyAuthentication=no'
+
+# Switch Credentials (aus Vault)
+switch_username: "{{ vault_switch_user }}"
+switch_password: "{{ vault_switch_password }}"
+
+# TFTP Configuration
+tftp_server_ip: "{{ vault_tftp_server }}"

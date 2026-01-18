@@ -5,7 +5,7 @@
   connection: local
   
   vars:
-    switch_host: "{{ switch_ip_address }}"
+    switch_host: "{{ ansible_host }}"
     switch_user: "admin"
     switch_pass: "neinnein"
   
@@ -17,8 +17,14 @@
         password: "{{ switch_pass }}"
         vlan_id: "{{ item.id }}"
         vlan_name: "{{ item.name }}"
+        hostname: "SG3210"
+        user_prompt: ">"
+        enable_prompt: "#"
+        config_prompt: "(config)#"
+        vlan_prompt: "(config-vlan)#"
+        save_success_msg: "Saving user config OK!"
       loop: "{{ common_vlans }}"
-      when: item.id != 1  # Skip default VLAN
+      when: item.id != 1
       
     - name: Configure trunk port (Port 1)
       tp_link_ssh_port_expect:
