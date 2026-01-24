@@ -1,0 +1,24 @@
+---
+- name: Configure VLANs (BATCH) on SG3210
+  hosts: managed_switches
+  gather_facts: no
+  connection: local
+  
+  vars:
+    switch_host: "{{ ansible_host }}"
+    switch_user: "admin"
+    switch_pass: "neinnein"
+  
+  tasks:
+    - name: Create ALL VLANs in one batch
+      tp_link_batch_vlan_expect:
+        host: "{{ switch_host }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_pass }}"
+        vlans: "{{ common_vlans }}"
+        hostname: "SG3210"
+      register: vlan_result
+      
+    - name: Show VLAN batch result
+      debug:
+        msg: "Created {{ vlan_result.vlans_created }} VLANs in {{ vlan_result.time | default('unknown') }} seconds"
