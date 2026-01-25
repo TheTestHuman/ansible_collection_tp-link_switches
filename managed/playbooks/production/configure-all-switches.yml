@@ -21,7 +21,7 @@
         password: "neinnein"
         port_config:
           trunk_ports:
-            - port: 1
+            - port: "{{ port_roles.management_trunk }}"
               vlans: "1,10,20,30,40"
         hostname: "{{ cli.hostname | default('SG3210') }}"
         mode: replace
@@ -38,6 +38,7 @@
             {{ port_roles.management_access | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 10}') | map('from_json') | list }}
         hostname: "{{ cli.hostname | default('SG3210') }}"
         mode: replace
+      when: port_roles.management_access | default([]) | length > 0
       register: mgmt_ports
       
     - name: "Switch: {{ inventory_hostname }} - Configure Access Ports - Clients"
@@ -50,6 +51,7 @@
             {{ port_roles.clients | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 20}') | map('from_json') | list }}
         hostname: "{{ cli.hostname | default('SG3210') }}"
         mode: replace
+      when: port_roles.clients | default([]) | length > 0
       register: client_ports
       
     - name: "Switch: {{ inventory_hostname }} - Configure Access Ports - Guests"
@@ -62,6 +64,7 @@
             {{ port_roles.guests | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 30}') | map('from_json') | list }}
         hostname: "{{ cli.hostname | default('SG3210') }}"
         mode: replace
+      when: port_roles.guests | default([]) | length > 0
       register: guest_ports
       
     - name: "Switch: {{ inventory_hostname }} - Configure Access Ports - IoT"
@@ -74,6 +77,7 @@
             {{ port_roles.iot | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 40}') | map('from_json') | list }}
         hostname: "{{ cli.hostname | default('SG3210') }}"
         mode: replace
+      when: port_roles.iot | default([]) | length > 0
       register: iot_ports
       
     - name: "Switch: {{ inventory_hostname }} - Summary"

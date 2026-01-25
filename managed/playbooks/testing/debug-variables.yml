@@ -1,0 +1,33 @@
+---
+- name: Debug Variable Loading
+  hosts: managed_switches
+  gather_facts: no
+  connection: ssh
+  
+  tasks:
+    - name: "Show ALL hostvars"
+      debug:
+        var: hostvars[inventory_hostname]
+        
+    - name: "Check port_roles directly"
+      debug:
+        var: port_roles
+      ignore_errors: yes
+      
+    - name: "Check via hostvars"
+      debug:
+        var: hostvars[inventory_hostname].port_roles
+      ignore_errors: yes
+      
+    - name: "Check via lookup"
+      debug:
+        msg: "{{ lookup('vars', 'port_roles', default='UNDEFINED') }}"
+      ignore_errors: yes
+      
+    - name: "Show variable source"
+      debug:
+        msg:
+          - "Inventory hostname: {{ inventory_hostname }}"
+          - "Ansible host: {{ ansible_host }}"
+          - "Host vars file exists: Check manually"
+          - "Variable precedence test"

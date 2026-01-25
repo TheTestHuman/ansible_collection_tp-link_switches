@@ -1,27 +1,32 @@
 ---
 all:
+  hosts:
+    switch-sg3210-office:
+      ansible_host: 10.0.10.1
+      switch_location: "Office"
+      port_roles:  # ✅ DIREKT hier!
+        management_trunk: 1
+        management_access: [2]
+        clients: [3, 4, 5, 6]
+        guests: [7]
+        iot: [8]
+        lag: [9, 10]
+    
+    switch-sg3210-warehouse:
+      ansible_host: 10.0.10.2
+      switch_location: "Warehouse"
+    
+    switch-sg3210-lab:
+      ansible_host: 10.0.10.3
+      switch_location: "Lab"
+  
   children:
     managed_switches:
       hosts:
         switch-sg3210-office:
-          ansible_host: 10.0.10.1
-          switch_model: "TL-SG3210"
-          switch_location: "Office"
-          switch_role: "core"
-          
         switch-sg3210-warehouse:
-          ansible_host: 10.0.10.2
-          switch_model: "TL-SG3210"
-          switch_location: "Warehouse"
-          switch_role: "access"
-          
         switch-sg3210-lab:
-          ansible_host: 10.0.10.3
-          switch_model: "TL-SG3210"
-          switch_location: "Lab"
-          switch_role: "test"
     
-    # Gruppierung nach Rolle
     core_switches:
       hosts:
         switch-sg3210-office:
