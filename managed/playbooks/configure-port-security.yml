@@ -79,4 +79,4 @@
           - "================================================"
           - ""
           - "Verify with: show mac address-table max-mac-count"
-          - "         or: show mac address-table max-mac-count interface gigabitEthernet 1/0/X"
+          - "         or: show mac address-table max-mac-count interface gigabitEthernet 1/0/2"

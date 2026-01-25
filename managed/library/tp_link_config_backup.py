@@ -8,11 +8,12 @@ import os
 
 DOCUMENTATION = r'''
 module: tp_link_config_backup
-short_description: Backup and restore configuration on TP-Link SG3210
+short_description: Backup and restore configuration on TP-Link switches
 description:
     - Creates local backup of running/startup configuration on the switch
     - Restores configuration from backup-config to running/startup
     - Uses the switch's internal backup-config storage
+    - Flexible prompts for different switch models
 options:
     host:
         description: Switch IP address
@@ -38,6 +39,22 @@ options:
         required: false
         default: "startup-config"
         choices: ['running-config', 'startup-config']
+    hostname:
+        description: Switch hostname for expect prompts
+        required: false
+        default: "SG3210"
+    user_prompt:
+        description: User mode prompt
+        required: false
+        default: ">"
+    enable_prompt:
+        description: Enable mode prompt
+        required: false
+        default: "#"
+    save_success_msg:
+        description: Success message after saving config
+        required: false
+        default: "Saving user config OK!"
 '''
 
 EXAMPLES = r'''
@@ -49,14 +66,6 @@ EXAMPLES = r'''
     action: backup
     source: running-config
 
-# Create backup from startup-config
-- tp_link_config_backup:
-    host: 10.0.10.1
-    username: admin
-    password: neinnein
-    action: backup
-    source: startup-config
-
 # Restore backup to startup-config
 - tp_link_config_backup:
     host: 10.0.10.1
@@ -64,17 +73,10 @@ EXAMPLES = r'''
     password: neinnein
     action: restore
     destination: startup-config
-
-# Restore backup to running-config (immediate effect!)
-- tp_link_config_backup:
-    host: 10.0.10.1
-    username: admin
-    password: neinnein
-    action: restore
-    destination: running-config
 '''
 
-def create_backup_script(host, username, password, action, source, destination):
+def create_backup_script(host, username, password, action, source, destination,
+                         hostname, user_prompt, enable_prompt, save_success_msg):
     """Generate expect script for backup/restore operations"""
     
     script = f'''#!/usr/bin/expect -f
@@ -84,11 +86,11 @@ set timeout 30
 spawn ssh -o PubkeyAuthentication=no {username}@{host}
 expect "password:"
 send "{password}\\r"
-expect "SG3210>"
+expect "{hostname}{user_prompt}"
 
 # Enter privileged mode
 send "enable\\r"
-expect "SG3210#"
+expect "{hostname}{enable_prompt}"
 '''
 
     if action == 'backup':
@@ -96,8 +98,8 @@ expect "SG3210#"
         script += f'''
 # Create backup from {source}
 send "copy {source} backup-config\\r"
-expect "Saving user config OK!"
-expect "SG3210#"
+expect "{save_success_msg}"
+expect "{hostname}{enable_prompt}"
 '''
     
     elif action == 'restore':
@@ -106,42 +108,38 @@ expect "SG3210#"
 # Restore backup to {destination}
 send "copy backup-config {destination}\\r"
 expect {{
-    "Saving user config OK!" {{
-        expect "SG3210#"
+    "{save_success_msg}" {{
+        expect "{hostname}{enable_prompt}"
     }}
     "Startup configuration is being used by the system!" {{
-        expect "SG3210#"
+        expect "{hostname}{enable_prompt}"
     }}
     timeout {{
         send_user "\\nTimeout waiting for restore completion\\n"
     }}
 }}
 '''
-        # If restoring to startup, also save
-        if destination == 'startup-config':
-            script += '''
-# Configuration already saved to startup
-'''
-        else:
-            # Restoring to running-config - offer to save
-            script += '''
+        # If restoring to startup, config already saved
+        if destination == 'running-config':
+            # Save running to startup
+            script += f'''
 # Save running-config to startup-config
 send "copy running-config startup-config\\r"
-expect "Saving user config OK!"
-expect "SG3210#"
+expect "{save_success_msg}"
+expect "{hostname}{enable_prompt}"
 '''
 
     # Exit
-    script += '''
+    script += f'''
 # Exit
 send "exit\\r"
-expect "SG3210>"
+expect "{hostname}{user_prompt}"
 send "exit\\r"
-expect {
-    eof { }
-    "Connection closed" { }
-    timeout { }
-}
+expect {{
+    eof {{ }}
+    "Connection closed" {{ }}
+    timeout {{ }}
+}}
 '''
     
     return script
@@ -157,6 +155,11 @@ def main():
                        choices=['running-config', 'startup-config']),
             destination=dict(type='str', required=False, default='startup-config',
                            choices=['running-config', 'startup-config']),
+            # Flexible prompts
+            hostname=dict(type='str', required=False, default='SG3210'),
+            user_prompt=dict(type='str', required=False, default='>'),
+            enable_prompt=dict(type='str', required=False, default='#'),
+            save_success_msg=dict(type='str', required=False, default='Saving user config OK!'),
         ),
         supports_check_mode=False
     )
@@ -169,7 +172,11 @@ def main():
             module.params['password'],
             module.params['action'],
             module.params['source'],
-            module.params['destination']
+            module.params['destination'],
+            module.params['hostname'],
+            module.params['user_prompt'],
+            module.params['enable_prompt'],
+            module.params['save_success_msg']
         )
     except Exception as e:
         module.fail_json(msg=f"Error generating script: {str(e)}")
@@ -182,6 +189,15 @@ def main():
     try:
         os.chmod(script_path, 0o700)
         result = subprocess.run([script_path], capture_output=True, text=True, timeout=60)
+        
+        # Check for errors
+        if "error" in result.stdout.lower():
+            if os.path.exists(script_path):
+                os.unlink(script_path)
+            module.fail_json(
+                msg=f"Backup/restore operation failed",
+                stdout=result.stdout
+            )
         
         os.unlink(script_path)
         
@@ -209,11 +225,11 @@ def main():
     except subprocess.TimeoutExpired:
         if os.path.exists(script_path):
             os.unlink(script_path)
-        module.fail_json(msg="Timeout during backup/restore operation")
+        module.fail_json(msg="Timeout during backup/restore operation - check switch connectivity")
     except Exception as e:
         if os.path.exists(script_path):
             os.unlink(script_path)
-        module.fail_json(msg=str(e))
+        module.fail_json(msg=f"Backup/restore error: {str(e)}")
 
 if __name__ == '__main__':
     main()

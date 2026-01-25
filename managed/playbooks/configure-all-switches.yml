@@ -1,0 +1,92 @@
+---
+- name: Configure ALL Managed Switches
+  hosts: managed_switches
+  gather_facts: no
+  connection: local
+  
+  tasks:
+    - name: "Switch: {{ inventory_hostname }} - Create VLANs"
+      tp_link_batch_vlan_expect:
+        host: "{{ ansible_host }}"
+        username: "admin"
+        password: "neinnein"
+        vlans: "{{ common_vlans }}"
+        hostname: "{{ cli.hostname | default('SG3210') }}"
+      register: vlan_result
+      
+    - name: "Switch: {{ inventory_hostname }} - Configure Trunk Port"
+      tp_link_batch_port_expect:
+        host: "{{ ansible_host }}"
+        username: "admin"
+        password: "neinnein"
+        port_config:
+          trunk_ports:
+            - port: 1
+              vlans: "1,10,20,30,40"
+        hostname: "{{ cli.hostname | default('SG3210') }}"
+        mode: replace
+        clear_existing: true
+      register: trunk_result
+      
+    - name: "Switch: {{ inventory_hostname }} - Configure Access Ports - Management"
+      tp_link_batch_port_expect:
+        host: "{{ ansible_host }}"
+        username: "admin"
+        password: "neinnein"
+        port_config:
+          access_ports: >-
+            {{ port_roles.management_access | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 10}') | map('from_json') | list }}
+        hostname: "{{ cli.hostname | default('SG3210') }}"
+        mode: replace
+      register: mgmt_ports
+      
+    - name: "Switch: {{ inventory_hostname }} - Configure Access Ports - Clients"
+      tp_link_batch_port_expect:
+        host: "{{ ansible_host }}"
+        username: "admin"
+        password: "neinnein"
+        port_config:
+          access_ports: >-
+            {{ port_roles.clients | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 20}') | map('from_json') | list }}
+        hostname: "{{ cli.hostname | default('SG3210') }}"
+        mode: replace
+      register: client_ports
+      
+    - name: "Switch: {{ inventory_hostname }} - Configure Access Ports - Guests"
+      tp_link_batch_port_expect:
+        host: "{{ ansible_host }}"
+        username: "admin"
+        password: "neinnein"
+        port_config:
+          access_ports: >-
+            {{ port_roles.guests | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 30}') | map('from_json') | list }}
+        hostname: "{{ cli.hostname | default('SG3210') }}"
+        mode: replace
+      register: guest_ports
+      
+    - name: "Switch: {{ inventory_hostname }} - Configure Access Ports - IoT"
+      tp_link_batch_port_expect:
+        host: "{{ ansible_host }}"
+        username: "admin"
+        password: "neinnein"
+        port_config:
+          access_ports: >-
+            {{ port_roles.iot | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 40}') | map('from_json') | list }}
+        hostname: "{{ cli.hostname | default('SG3210') }}"
+        mode: replace
+      register: iot_ports
+      
+    - name: "Switch: {{ inventory_hostname }} - Summary"
+      debug:
+        msg:
+          - "================================================"
+          - "{{ inventory_hostname }} ({{ switch_location }})"
+          - "================================================"
+          - "VLANs: {{ vlan_result.vlans_created | default(0) }} created"
+          - "Trunk: {{ trunk_result.ports_configured | default(0) }} ports"
+          - "Management: {{ mgmt_ports.ports_configured | default(0) }} ports"
+          - "Clients: {{ client_ports.ports_configured | default(0) }} ports"
+          - "Guests: {{ guest_ports.ports_configured | default(0) }} ports"
+          - "IoT: {{ iot_ports.ports_configured | default(0) }} ports"
+          - "================================================"
+          - "Status: OK"

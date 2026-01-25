@@ -1,0 +1,10 @@
+---
+all:
+  children:
+    managed_switches:
+      hosts:
+        switch-sg3210:
+          ansible_host: 10.0.10.1  # Nach Konfiguration
+          switch_model: "TL-SG3210"
+          total_ports: 10
+          management_method: "ssh"  # Nach SSH enabled

@@ -9,11 +9,12 @@ from datetime import datetime
 
 DOCUMENTATION = r'''
 module: tp_link_tftp_backup
-short_description: Backup/restore configuration via TFTP on TP-Link SG3210
+short_description: Backup/restore configuration via TFTP on TP-Link switches
 description:
     - Backs up switch configuration to a TFTP server
     - Restores switch configuration from a TFTP server
     - Supports startup-config and backup-config
+    - Flexible prompts for different switch models
 options:
     host:
         description: Switch IP address
@@ -46,6 +47,18 @@ options:
         required: false
         default: true
         type: bool
+    hostname:
+        description: Switch hostname for expect prompts
+        required: false
+        default: "SG3210"
+    user_prompt:
+        description: User mode prompt
+        required: false
+        default: ">"
+    enable_prompt:
+        description: Enable mode prompt
+        required: false
+        default: "#"
 '''
 
 EXAMPLES = r'''
@@ -54,33 +67,26 @@ EXAMPLES = r'''
     host: 10.0.10.1
     username: admin
     password: neinnein
-    tftp_server: 192.168.0.15
+    tftp_server: 10.0.10.15
     action: backup
     config_type: startup-config
     auto_timestamp: true
-
-# Backup with custom filename
-- tp_link_tftp_backup:
-    host: 10.0.10.1
-    username: admin
-    password: neinnein
-    tftp_server: 192.168.0.15
-    action: backup
-    filename: switch-sg3210-config.txt
 
 # Restore from TFTP
 - tp_link_tftp_backup:
     host: 10.0.10.1
     username: admin
     password: neinnein
-    tftp_server: 192.168.0.15
+    tftp_server: 10.0.10.15
     action: restore
     config_type: startup-config
-    filename: switch-sg3210-backup-20250107.txt
+    filename: switch-backup-20250118.txt
+    auto_timestamp: false
 '''
 
 def create_tftp_script(host, username, password, tftp_server, action, 
-                       config_type, filename, auto_timestamp):
+                       config_type, filename, auto_timestamp, hostname,
+                       user_prompt, enable_prompt):
     """Generate expect script for TFTP backup/restore operations"""
     
     # Generate filename if auto or add timestamp
@@ -100,11 +106,11 @@ set timeout 60
 spawn ssh -o PubkeyAuthentication=no {username}@{host}
 expect "password:"
 send "{password}\\r"
-expect "SG3210>"
+expect "{hostname}{user_prompt}"
 
 # Enter privileged mode
 send "enable\\r"
-expect "SG3210#"
+expect "{hostname}{enable_prompt}"
 '''
 
     if action == 'backup':
@@ -115,11 +121,15 @@ send "copy {config_type} tftp ip-address {tftp_server} filename {filename}\\r"
 expect {{
     "successfully" {{
         send_user "\\nBackup completed successfully\\n"
-        expect "SG3210#"
+        expect "{hostname}{enable_prompt}"
     }}
     "Error" {{
         send_user "\\nBackup failed\\n"
-        expect "SG3210#"
+        expect "{hostname}{enable_prompt}"
+    }}
+    "Failed to initialize TFTP" {{
+        send_user "\\nTFTP server not reachable\\n"
+        expect "{hostname}{enable_prompt}"
     }}
     timeout {{
         send_user "\\nTimeout during TFTP backup\\n"
@@ -135,11 +145,15 @@ send "copy tftp {config_type} ip-address {tftp_server} filename {filename}\\r"
 expect {{
     "successfully" {{
         send_user "\\nRestore completed successfully\\n"
-        expect "SG3210#"
+        expect "{hostname}{enable_prompt}"
     }}
     "Error" {{
         send_user "\\nRestore failed\\n"
-        expect "SG3210#"
+        expect "{hostname}{enable_prompt}"
+    }}
+    "Failed to initialize TFTP" {{
+        send_user "\\nTFTP server not reachable\\n"
+        expect "{hostname}{enable_prompt}"
     }}
     timeout {{
         send_user "\\nTimeout during TFTP restore\\n"
@@ -148,16 +162,16 @@ expect {{
 '''
 
     # Exit
-    script += '''
+    script += f'''
 # Exit
 send "exit\\r"
-expect "SG3210>"
+expect "{hostname}{user_prompt}"
 send "exit\\r"
-expect {
-    eof { }
-    "Connection closed" { }
-    timeout { }
-}
+expect {{
+    eof {{ }}
+    "Connection closed" {{ }}
+    timeout {{ }}
+}}
 '''
     
     return script, filename
@@ -174,6 +188,10 @@ def main():
                            choices=['startup-config', 'backup-config']),
             filename=dict(type='str', required=False, default='auto'),
             auto_timestamp=dict(type='bool', required=False, default=True),
+            # Flexible prompts
+            hostname=dict(type='str', required=False, default='SG3210'),
+            user_prompt=dict(type='str', required=False, default='>'),
+            enable_prompt=dict(type='str', required=False, default='#'),
         ),
         supports_check_mode=False
     )
@@ -188,7 +206,10 @@ def main():
             module.params['action'],
             module.params['config_type'],
             module.params['filename'],
-            module.params['auto_timestamp']
+            module.params['auto_timestamp'],
+            module.params['hostname'],
+            module.params['user_prompt'],
+            module.params['enable_prompt']
         )
     except Exception as e:
         module.fail_json(msg=f"Error generating script: {str(e)}")
@@ -211,9 +232,12 @@ def main():
                 msg = f"Configuration backed up to TFTP server {module.params['tftp_server']}"
             else:
                 msg = f"Configuration restored from TFTP server {module.params['tftp_server']}"
+        elif "failed to initialize tftp" in result.stdout.lower():
+            success = False
+            msg = f"TFTP server {module.params['tftp_server']} not reachable - check network and TFTP service"
         else:
             success = False
-            msg = f"TFTP {module.params['action']} may have failed - check TFTP server"
+            msg = f"TFTP {module.params['action']} may have failed - check TFTP server logs"
         
         result_data = {
             'action': module.params['action'],
@@ -227,16 +251,16 @@ def main():
             msg=msg,
             tftp_info=result_data,
             stdout=result.stdout,
-            warnings=[] if success else ["TFTP operation may have failed - verify TFTP server logs"]
+            warnings=[] if success else [f"TFTP operation may have failed - verify TFTP server at {module.params['tftp_server']}"]
         )
     except subprocess.TimeoutExpired:
         if os.path.exists(script_path):
             os.unlink(script_path)
-        module.fail_json(msg="Timeout during TFTP operation - check TFTP server accessibility")
+        module.fail_json(msg=f"Timeout during TFTP operation - check TFTP server {module.params['tftp_server']} accessibility")
     except Exception as e:
         if os.path.exists(script_path):
             os.unlink(script_path)
-        module.fail_json(msg=str(e))
+        module.fail_json(msg=f"TFTP error: {str(e)}")
 
 if __name__ == '__main__':
     main()

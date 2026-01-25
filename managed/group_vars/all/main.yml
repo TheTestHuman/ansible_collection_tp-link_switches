@@ -14,3 +14,19 @@ switch_password: "{{ vault_switch_password }}"
 
 # TFTP Configuration
 tftp_server_ip: "{{ vault_tftp_server }}"
+
+# VLAN Configuration
+common_vlans:
+  - id: 1
+    name: "Default"
+  - id: 10
+    name: "Management"
+  - id: 20
+    name: "Clients"
+  - id: 30
+    name: "Guests"
+  - id: 40
+    name: "IoT"
+
+# VLAN Protection
+protected_vlans: [1]

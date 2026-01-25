@@ -1,0 +1,35 @@
+---
+- name: Configure Ports
+  hosts: managed_switches
+  gather_facts: no
+  connection: local
+  
+  vars:
+    switch_host: "{{ ansible_host }}"
+    switch_user: "admin"
+    switch_pass: "neinnein"
+    
+    # Renamed vars - keine Rekursion!
+    config_mode: "{{ mode | default('replace') }}"
+    clear_vlans: "{{ clear_existing | default(false) }}"
+    
+    port_configuration:
+      trunk_ports:
+        - port: 1
+          vlans: "1,10,20"
+      access_ports:
+        - port: 2
+          vlan: 10
+        - port: 3
+          vlan: 20
+  
+  tasks:
+    - name: Configure ports
+      tp_link_batch_port_expect:
+        host: "{{ switch_host }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_pass }}"
+        port_config: "{{ port_configuration }}"
+        hostname: "SG3210"
+        mode: "{{ config_mode }}"  # Neue Variable!
+        clear_existing: "{{ clear_vlans }}"  # Neue Variable!

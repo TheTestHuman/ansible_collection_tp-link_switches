@@ -1,0 +1,28 @@
+---
+- name: Configure Ports - Dynamic
+  hosts: managed_switches
+  gather_facts: no
+  connection: local
+  
+  vars:
+    switch_host: "{{ ansible_host }}"
+    switch_user: "admin"
+    switch_pass: "neinnein"
+    
+    # Dynamisch: Welche Ports bekommt VLAN 20?
+    vlan_20_ports: [3, 4, 5, 6]  # Variable Port-Liste!
+    
+  tasks:
+    - name: Build port config dynamically
+      set_fact:
+        dynamic_port_config:
+          access_ports: "{{ vlan_20_ports | map('regex_replace', '^(.*)$', '{ \"port\": \\1, \"vlan\": 20 }') | map('from_json') | list }}"
+    
+    - name: Configure ports dynamically
+      tp_link_batch_port_expect:
+        host: "{{ switch_host }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_pass }}"
+        port_config: "{{ dynamic_port_config }}"
+        hostname: "SG3210"
+        mode: replace

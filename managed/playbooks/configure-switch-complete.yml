@@ -1,0 +1,60 @@
+---
+- name: Complete Switch Configuration (OPTIMIZED)
+  hosts: managed_switches
+  gather_facts: no
+  connection: local
+  
+  vars:
+    switch_host: "{{ ansible_host }}"
+    switch_user: "admin"
+    switch_pass: "neinnein"
+    
+    port_configuration:
+      trunk_ports:
+        - port: 1
+          vlans: "1,10,20,30,40"
+      access_ports:
+        - port: 2
+          vlan: 10
+        - port: 3
+          vlan: 20
+        - port: 4
+          vlan: 20
+        - port: 5
+          vlan: 30
+        - port: 6
+          vlan: 30
+        - port: 7
+          vlan: 40
+        - port: 8
+          vlan: 40
+  
+  tasks:
+    - name: "Step 1: Create VLANs (Batch)"
+      tp_link_batch_vlan_expect:
+        host: "{{ switch_host }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_pass }}"
+        vlans: "{{ common_vlans }}"
+        hostname: "SG3210"
+      register: vlan_result
+      
+    - name: "Step 2: Configure Ports (Batch)"
+      tp_link_batch_port_expect:
+        host: "{{ switch_host }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_pass }}"
+        port_config: "{{ port_configuration }}"
+        hostname: "SG3210"
+      register: port_result
+      
+    - name: "Summary"
+      debug:
+        msg:
+          - "============================================"
+          - "Switch Configuration Complete!"
+          - "============================================"
+          - "VLANs created: {{ vlan_result.vlans_created }}"
+          - "Ports configured: {{ port_result.ports_configured }}"
+          - "Total runtime: Check above (should be ~2 minutes!)"
+          - "============================================"
