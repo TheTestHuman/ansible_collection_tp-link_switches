@@ -1,96 +1,101 @@
 ---
+# =============================================================================
+# Configure ALL Managed Switches
+# =============================================================================
+# Konfiguriert VLANs und Ports auf allen TP-Link SG3210 Switches
+#
+# Verwendung:
+#   ansible-playbook playbooks/production/configure-all-switches.yml
+#   ansible-playbook playbooks/production/configure-all-switches.yml --limit switch-sg3210-office
+#   ansible-playbook playbooks/production/configure-all-switches.yml -e "vlan_mode=add"
+#   ansible-playbook playbooks/production/configure-all-switches.yml -e "port_mode=add"
+#
+# Modi:
+#   replace (default) - Löscht bestehende Config, dann neu konfigurieren
+#   add               - Fügt nur hinzu, löscht nichts
+# =============================================================================
+
 - name: Configure ALL Managed Switches
   hosts: managed_switches
   gather_facts: no
   connection: local
   
+  vars:
+    # Konfigurationsmodi (überschreibbar via -e)
+    vlan_mode: "replace"
+    port_mode: "replace"
+  
   tasks:
-    - name: "Switch: {{ inventory_hostname }} - Create VLANs"
+    # =========================================================================
+    # PHASE 1: VLAN Configuration
+    # =========================================================================
+    - name: "{{ inventory_hostname }} | Configure VLANs (mode: {{ vlan_mode }})"
       tp_link_batch_vlan_expect:
         host: "{{ ansible_host }}"
-        username: "admin"
-        password: "neinnein"
+        username: "{{ vault_switch_user }}"
+        password: "{{ vault_switch_password }}"
         vlans: "{{ common_vlans }}"
         hostname: "{{ cli.hostname | default('SG3210') }}"
+        mode: "{{ vlan_mode }}"
+        protected_vlans: "{{ protected_vlans | default([1]) }}"
       register: vlan_result
-      
-    - name: "Switch: {{ inventory_hostname }} - Configure Trunk Port"
+
+    # =========================================================================
+    # PHASE 2: Build Access Port List
+    # =========================================================================
+    - name: "{{ inventory_hostname }} | Initialize access port list"
+      set_fact:
+        access_port_list: []
+
+    - name: "{{ inventory_hostname }} | Add management access ports (VLAN 10)"
+      set_fact:
+        access_port_list: "{{ access_port_list + [{'port': item, 'vlan': 10}] }}"
+      loop: "{{ port_roles.management_access | default([]) }}"
+
+    - name: "{{ inventory_hostname }} | Add client ports (VLAN 20)"
+      set_fact:
+        access_port_list: "{{ access_port_list + [{'port': item, 'vlan': 20}] }}"
+      loop: "{{ port_roles.clients | default([]) }}"
+
+    - name: "{{ inventory_hostname }} | Add guest ports (VLAN 30)"
+      set_fact:
+        access_port_list: "{{ access_port_list + [{'port': item, 'vlan': 30}] }}"
+      loop: "{{ port_roles.guests | default([]) }}"
+
+    - name: "{{ inventory_hostname }} | Add IoT ports (VLAN 40)"
+      set_fact:
+        access_port_list: "{{ access_port_list + [{'port': item, 'vlan': 40}] }}"
+      loop: "{{ port_roles.iot | default([]) }}"
+
+    # =========================================================================
+    # PHASE 3: Port Configuration (ALL ports in ONE SSH session!)
+    # =========================================================================
+    - name: "{{ inventory_hostname }} | Configure ALL Ports (mode: {{ port_mode }})"
       tp_link_batch_port_expect:
         host: "{{ ansible_host }}"
-        username: "admin"
-        password: "neinnein"
-        port_config:
-          trunk_ports:
-            - port: "{{ port_roles.management_trunk }}"
-              vlans: "1,10,20,30,40"
+        username: "{{ vault_switch_user }}"
+        password: "{{ vault_switch_password }}"
         hostname: "{{ cli.hostname | default('SG3210') }}"
-        mode: replace
-        clear_existing: true
-      register: trunk_result
-      
-    - name: "Switch: {{ inventory_hostname }} - Configure Access Ports - Management"
-      tp_link_batch_port_expect:
-        host: "{{ ansible_host }}"
-        username: "admin"
-        password: "neinnein"
-        port_config:
-          access_ports: >-
-            {{ port_roles.management_access | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 10}') | map('from_json') | list }}
-        hostname: "{{ cli.hostname | default('SG3210') }}"
-        mode: replace
-      when: port_roles.management_access | default([]) | length > 0
-      register: mgmt_ports
-      
-    - name: "Switch: {{ inventory_hostname }} - Configure Access Ports - Clients"
-      tp_link_batch_port_expect:
-        host: "{{ ansible_host }}"
-        username: "admin"
-        password: "neinnein"
-        port_config:
-          access_ports: >-
-            {{ port_roles.clients | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 20}') | map('from_json') | list }}
-        hostname: "{{ cli.hostname | default('SG3210') }}"
-        mode: replace
-      when: port_roles.clients | default([]) | length > 0
-      register: client_ports
-      
-    - name: "Switch: {{ inventory_hostname }} - Configure Access Ports - Guests"
-      tp_link_batch_port_expect:
-        host: "{{ ansible_host }}"
-        username: "admin"
-        password: "neinnein"
-        port_config:
-          access_ports: >-
-            {{ port_roles.guests | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 30}') | map('from_json') | list }}
-        hostname: "{{ cli.hostname | default('SG3210') }}"
-        mode: replace
-      when: port_roles.guests | default([]) | length > 0
-      register: guest_ports
-      
-    - name: "Switch: {{ inventory_hostname }} - Configure Access Ports - IoT"
-      tp_link_batch_port_expect:
-        host: "{{ ansible_host }}"
-        username: "admin"
-        password: "neinnein"
-        port_config:
-          access_ports: >-
-            {{ port_roles.iot | default([]) | map('regex_replace', '^(.*)$', '{"port": \1, "vlan": 40}') | map('from_json') | list }}
-        hostname: "{{ cli.hostname | default('SG3210') }}"
-        mode: replace
-      when: port_roles.iot | default([]) | length > 0
-      register: iot_ports
-      
-    - name: "Switch: {{ inventory_hostname }} - Summary"
+        mode: "{{ port_mode }}"
+        trunk_ports:
+          - port: "{{ port_roles.management_trunk }}"
+            vlans: "{{ common_vlans | map(attribute='id') | list }}"
+        access_ports: "{{ access_port_list }}"
+      register: port_result
+
+    # =========================================================================
+    # PHASE 4: Summary
+    # =========================================================================
+    - name: "{{ inventory_hostname }} | Configuration Summary"
       debug:
         msg:
-          - "================================================"
-          - "{{ inventory_hostname }} ({{ switch_location }})"
-          - "================================================"
-          - "VLANs: {{ vlan_result.vlans_created | default(0) }} created"
-          - "Trunk: {{ trunk_result.ports_configured | default(0) }} ports"
-          - "Management: {{ mgmt_ports.ports_configured | default(0) }} ports"
-          - "Clients: {{ client_ports.ports_configured | default(0) }} ports"
-          - "Guests: {{ guest_ports.ports_configured | default(0) }} ports"
-          - "IoT: {{ iot_ports.ports_configured | default(0) }} ports"
-          - "================================================"
-          - "Status: OK"
+          - "=============================================="
+          - "Switch: {{ inventory_hostname }}"
+          - "Location: {{ switch_location | default('Unknown') }}"
+          - "=============================================="
+          - "VLANs: {{ vlan_result.vlans_created | default(0) }} configured (mode: {{ vlan_mode }})"
+          - "Trunk Ports: {{ port_result.trunk_ports_configured | default(0) }}"
+          - "Access Ports: {{ port_result.access_ports_configured | default(0) }}"
+          - "=============================================="
+          - "Status: SUCCESS"
+          - "=============================================="
