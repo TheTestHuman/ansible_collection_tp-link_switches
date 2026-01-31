@@ -1,109 +1,107 @@
-# Managed Switches (TP-Link SG3210)
+TP-Link Switch Ansible Collection
+Ansible-Module und Playbooks zur Automatisierung von TP-Link Switches.
+Unterstützte Switch-Typen
+Typ
+Modell
+Protokoll
+Status
+Managed
+SG3210
+SSH + expect
+✅ Produktionsreif
+Easy Smart
+SG108E
+UDP (proprietär)
+✅ Basis-Funktionalität
+Projektstruktur
+ansible_collection_tp-link_switches/
+├── README.md                    # Diese Datei
+├── docs/                        # Übergreifende Dokumentation
+│   ├── sg3210-ssh-expect-solution.md
+│   └── sg3210-cli-exploration.md
+├── managed/                     # SG3210 Managed Switch
+│   ├── README.md               # Detaillierte Doku
+│   ├── library/                # Ansible-Module
+│   ├── playbooks/              # Playbooks
+│   ├── inventory/              # Inventory & Variablen
+│   └── backups/                # Config-Backups
+├── easy_smart/                  # SG108E Easy Smart Switch
+│   ├── inventory/
+│   ├── playbooks/
+│   └── templates/
+└── common/                      # Gemeinsame Ressourcen
 
-## Übersicht
+Quick Start
+Voraussetzungen
+# Ansible installieren
+sudo apt-get install ansible -y
 
-Ansible-Module für TP-Link SG3210 Managed Switch via SSH mit `expect`.
-
-**WICHTIG:** Dieser Switch hat spezielle TTY-Anforderungen und funktioniert **nur** mit `expect`, nicht mit Standard-Python-SSH-Bibliotheken! Siehe [Dokumentation](../docs/sg3210-ssh-expect-solution.md) für Details.
-
-## Module
-
-### tp_link_ssh_vlan_expect
-VLAN-Management via SSH
-
-**Parameter:**
-- `host`: Switch IP
-- `username`: SSH Username
-- `password`: SSH Password
-- `vlan_id`: VLAN ID (1-4094)
-- `vlan_name`: VLAN Name
-
-### tp_link_ssh_port_expect
-Port-Konfiguration via SSH
-
-**Parameter:**
-- `host`: Switch IP
-- `username`: SSH Username  
-- `password`: SSH Password
-- `port`: Port-Nummer (1-10)
-- `mode`: `access` oder `trunk`
-- `access_vlan`: VLAN ID für Access-Mode
-- `trunk_vlans`: Komma-separierte VLAN-Liste für Trunk (z.B. "10,20,30")
-
-## Voraussetzungen
-```bash
-# expect installieren
+# expect installieren (für Managed Switches)
 sudo apt-get install expect -y
 
-# SSH auf dem Switch aktivieren (über Web-Interface)
-# System Tools → User Config → SSH: Enable
-```
+Managed Switch (SG3210)
+cd managed/
 
-## Verwendung
+# Vault-Passwort setzen
+echo "dein-vault-passwort" > .vault_pass
+chmod 600 .vault_pass
 
-### Inventory konfigurieren
+# Switch konfigurieren
+ansible-playbook playbooks/production/configure-all-switches.yml --limit switch-sg3210-office -v
 
-`inventory/production.yml`:
-```yaml
-all:
-  children:
-    managed_switches:
-      hosts:
-        switch-sg3210:
-          ansible_host: 192.168.0.1
-          switch_model: "TL-SG3210"
-          total_ports: 10
-```
+Easy Smart Switch (SG108E)
+cd easy_smart/
 
-`inventory/host_vars/switch-sg3210.yml`:
-```yaml
-switch_ip_address: "192.168.0.1"
-admin_password: "neinnein"
+# Switch konfigurieren (UDP-basiert, kein SSH)
+ansible-playbook playbooks/configure-switch.yml -v
 
-port_roles:
-  management_trunk: 1
-  management_access: [2]
-  clients: [3, 4]
-  guests: [5, 6]
-  iot: [7, 8]
-```
-
-### VLANs und Ports konfigurieren
-```bash
-cd ~/ansible_collection_tp-link_switches/managed
-ansible-playbook -i inventory/production.yml playbooks/configure-vlans.yml -v
-```
-
-## Port-Bezeichnungen
-
-- Ports 1-8: `gigabitEthernet 1/0/1` bis `1/0/8` (Copper)
-- Ports 9-10: `gigabitEthernet 1/0/9` bis `1/0/10` (SFP - aktuell nicht verwendet)
-
-## Troubleshooting
-
-### SSH-Key-Probleme
-```bash
-# SSH ohne Public-Key-Auth
-ssh -o PubkeyAuthentication=no admin@192.168.0.1
-```
-
-In `inventory/group_vars/all.yml` hinzufügen:
-```yaml
-ansible_ssh_common_args: '-o PubkeyAuthentication=no'
-```
-
-### expect nicht gefunden
-```bash
-sudo apt-get install expect -y
-```
-
-### Konfiguration funktioniert nicht
-
-1. Manuell per SSH testen ob Befehle funktionieren
-2. Prüfen ob SSH aktiviert ist (Web-Interface)
-3. Logs prüfen: Module geben stdout zurück
-
-## Weitere Dokumentation
-
-- [Warum expect?](../docs/sg3210-ssh-expect-solution.md) - Ausführliche Erklärung des Problems
-- [CLI Exploration](../docs/sg3210-cli-exploration.md) - CLI-Befehle und Struktur
+Dokumentation
+Managed Switch (SG3210) - Vollständige Modul- und Playbook-Dokumentation
+Warum expect? - Technische Hintergründe
+CLI Exploration - Switch CLI-Befehle
+Features
+Managed Switch (SG3210)
+Feature
+Modul
+Status
+VLAN-Management
+tp_link_batch_vlan_expect
+✅
+Port-Konfiguration
+tp_link_batch_port_expect
+✅
+Link Aggregation (LAG)
+tp_link_lag_expect
+✅
+Port Security
+tp_link_port_security_expect
+✅
+Config Backup/Restore
+tp_link_config_backup
+✅
+Initial Setup
+tp_link_take_ownership
+✅
+Easy Smart Switch (SG108E)
+Feature
+Status
+VLAN-Management
+✅
+Port-Konfiguration
+✅
+Initial Setup
+✅
+Entwicklung
+Dieses Projekt entstand im Rahmen einer akademischen Arbeit zur Netzwerkautomatisierung mit Ansible.
+Besonderheiten
+Managed Switches (SG3210): Erfordern expect statt Standard-SSH-Bibliotheken aufgrund spezieller TTY-Anforderungen
+Easy Smart Switches (SG108E): Nutzen ein proprietäres UDP-Protokoll (kein SSH/Telnet)
+Erweiterbarkeit
+Die Struktur ist für weitere Switch-Typen erweiterbar:
+Neue Switch-Familie → Neuer Ordner (z.B. cisco/)
+Gemeinsame Logik → common/ Ordner
+Übergreifende Playbooks möglich
+Lizenz
+MIT License
+Autor
+Entwickelt als Forschungsprojekt zur Ansible-basierten Netzwerkautomatisierung.
