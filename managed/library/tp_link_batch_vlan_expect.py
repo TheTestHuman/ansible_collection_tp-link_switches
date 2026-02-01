@@ -2,24 +2,26 @@
 # -*- coding: utf-8 -*-
 
 """
-TP-Link SG3210 Batch VLAN Configuration Module (Optimiert)
+TP-Link SG3210 Batch VLAN Configuration Module
 
-Erstellt/verwaltet VLANs auf TP-Link SG3210 Managed Switches via expect.
-OPTIMIERT: Bei mode=replace wird zuerst 'show vlan' ausgeführt, um nur
-tatsächlich existierende VLANs zu löschen (statt blind 2-100).
+Creates and manages VLANs on TP-Link SG3210 Managed Switches via SSH/expect.
 
-Parameter:
-    host: Switch IP-Adresse
-    username: SSH Username
-    password: SSH Passwort
-    vlans: Liste von VLANs [{id: 10, name: "Management"}, ...]
-    hostname: CLI Prompt Hostname (default: SG3210)
-    mode: "replace" oder "add" (default: add)
-        - replace: Löscht existierende VLANs (außer protected), dann erstellt neue
-        - add: Fügt VLANs nur hinzu (keine Löschung)
-    protected_vlans: Liste von VLAN-IDs die nie gelöscht werden (default: [1])
+Features:
+    - Batch creation of multiple VLANs in one session
+    - Mode 'add': Only adds new VLANs (no deletion)
+    - Mode 'replace': Queries existing VLANs first, deletes non-protected ones, then creates new
+    - Protected VLANs are never deleted (default: VLAN 1)
 
-Beispiel:
+Parameters:
+    host: Switch IP address
+    username: SSH username
+    password: SSH password
+    vlans: List of VLANs [{id: 10, name: "Management"}, ...]
+    hostname: CLI prompt hostname (default: SG3210)
+    mode: "replace" or "add" (default: add)
+    protected_vlans: List of VLAN IDs that are never deleted (default: [1])
+
+Example:
     - tp_link_batch_vlan_expect:
         host: "10.0.10.1"
         username: "admin"
@@ -40,6 +42,143 @@ import os
 import re
 
 
+DOCUMENTATION = r'''
+module: tp_link_batch_vlan_expect
+short_description: Batch VLAN configuration on TP-Link SG3210 switches
+description:
+    - Creates and manages VLANs on TP-Link SG3210 Managed Switches
+    - Supports batch creation of multiple VLANs
+    - Mode 'replace' queries existing VLANs and removes non-protected ones
+    - Mode 'add' only adds VLANs without removing existing ones
+options:
+    host:
+        description: Switch IP address
+        required: true
+    username:
+        description: SSH username
+        required: true
+    password:
+        description: SSH password
+        required: true
+        no_log: true
+    vlans:
+        description: List of VLANs to create, each with 'id' and 'name'
+        required: true
+        type: list
+        elements: dict
+    hostname:
+        description: Switch hostname for expect prompts
+        required: false
+        default: "SG3210"
+    mode:
+        description: Operation mode - 'add' only adds, 'replace' removes non-protected VLANs first
+        required: false
+        default: "add"
+        choices: ['add', 'replace']
+    protected_vlans:
+        description: List of VLAN IDs that should never be deleted
+        required: false
+        default: [1]
+        type: list
+        elements: int
+'''
+
+EXAMPLES = r'''
+# Add VLANs (no deletion)
+- tp_link_batch_vlan_expect:
+    host: 10.0.10.1
+    username: admin
+    password: secret
+    vlans:
+      - id: 10
+        name: "Management"
+      - id: 20
+        name: "Clients"
+    mode: add
+
+# Replace VLANs (delete existing, then create new)
+- tp_link_batch_vlan_expect:
+    host: 10.0.10.1
+    username: admin
+    password: secret
+    vlans:
+      - id: 10
+        name: "Management"
+      - id: 20
+        name: "Clients"
+      - id: 30
+        name: "Servers"
+    mode: replace
+    protected_vlans: [1]
+
+# With custom hostname
+- tp_link_batch_vlan_expect:
+    host: 10.0.20.1
+    username: admin
+    password: secret
+    vlans:
+      - id: 100
+        name: "Guest-Network"
+    hostname: "CORE-SW1"
+'''
+
+
+def escape_vlan_name(name):
+    """Escape special characters in VLAN name for expect script"""
+    # Remove or replace problematic characters
+    # VLAN names typically allow alphanumeric, hyphen, underscore
+    escaped = name.replace('\\', '')  # Remove backslashes
+    escaped = escaped.replace('"', '')  # Remove double quotes
+    escaped = escaped.replace("'", '')  # Remove single quotes
+    escaped = escaped.replace('$', '')  # Remove dollar signs (expect variable)
+    escaped = escaped.replace('[', '')  # Remove brackets
+    escaped = escaped.replace(']', '')
+    escaped = escaped.replace('{', '')  # Remove braces
+    escaped = escaped.replace('}', '')
+    # Limit length (TP-Link typically allows max 32 chars)
+    return escaped[:32]
+
+
+def validate_vlans(module, vlans, protected_vlans):
+    """Validate VLAN list structure and values"""
+    seen_ids = set()
+    
+    for i, vlan in enumerate(vlans):
+        # Check required fields
+        if 'id' not in vlan:
+            module.fail_json(msg=f"VLAN #{i+1}: Missing required field 'id'")
+        if 'name' not in vlan:
+            module.fail_json(msg=f"VLAN #{i+1} (ID {vlan.get('id', '?')}): Missing required field 'name'")
+        
+        vlan_id = vlan['id']
+        vlan_name = vlan['name']
+        
+        # Validate VLAN ID type
+        if not isinstance(vlan_id, int):
+            module.fail_json(msg=f"VLAN #{i+1}: 'id' must be an integer, got {type(vlan_id).__name__}")
+        
+        # Validate VLAN ID range (1-4094 per IEEE 802.1Q, but TP-Link may have limits)
+        if not 1 <= vlan_id <= 4094:
+            module.fail_json(msg=f"VLAN {vlan_id}: ID must be between 1 and 4094")
+        
+        # Check for duplicate VLAN IDs
+        if vlan_id in seen_ids:
+            module.fail_json(msg=f"VLAN {vlan_id}: Duplicate VLAN ID in list")
+        seen_ids.add(vlan_id)
+        
+        # Validate VLAN name type
+        if not isinstance(vlan_name, str):
+            module.fail_json(msg=f"VLAN {vlan_id}: 'name' must be a string, got {type(vlan_name).__name__}")
+        
+        # Validate VLAN name not empty
+        if not vlan_name.strip():
+            module.fail_json(msg=f"VLAN {vlan_id}: 'name' cannot be empty")
+        
+        # Warn about protected VLANs in list (they won't be created)
+        if vlan_id in protected_vlans and vlan_id != 1:
+            module.warn(f"VLAN {vlan_id} is in protected_vlans list and will be skipped")
+
+
 def create_check_vlan_script(host, username, password, hostname):
     """Generate expect script to get current VLANs via 'show vlan'"""
     
@@ -48,7 +187,7 @@ set timeout 30
 log_user 1
 
 # === CONNECTION PHASE ===
-spawn ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=10 {username}@{host}
+spawn ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=20 {username}@{host}
 
 expect {{
     "No route to host" {{
@@ -67,6 +206,10 @@ expect {{
         puts "ERROR_HOST_UNREACHABLE: Host {host} is unreachable"
         exit 1
     }}
+    "Name or service not known" {{
+        puts "ERROR_DNS_FAILED: Could not resolve hostname {host}"
+        exit 1
+    }}
     "password:" {{
         send "{password}\\r"
     }}
@@ -79,19 +222,33 @@ expect {{
 # === LOGIN PHASE ===
 expect {{
     "Permission denied" {{
-        puts "ERROR_AUTH_FAILED: Authentication failed"
+        puts "ERROR_AUTH_FAILED: Authentication failed - wrong username or password"
+        exit 1
+    }}
+    "Access denied" {{
+        puts "ERROR_AUTH_FAILED: Access denied - wrong username or password"
         exit 1
     }}
     "{hostname}>" {{}}
     timeout {{
-        puts "ERROR_AUTH_FAILED: Login timeout"
+        puts "ERROR_AUTH_FAILED: Login timeout - check username/password"
         exit 1
     }}
 }}
 
 # === ENABLE MODE ===
 send "enable\\r"
-expect "{hostname}#"
+expect {{
+    "{hostname}#" {{}}
+    "Password:" {{
+        puts "ERROR_ENABLE_PASSWORD: Enable password required but not provided"
+        exit 1
+    }}
+    timeout {{
+        puts "ERROR_ENABLE_TIMEOUT: Timeout entering enable mode"
+        exit 1
+    }}
+}}
 
 # === SHOW VLAN ===
 send "terminal length 0\\r"
@@ -114,9 +271,10 @@ def parse_existing_vlans(output):
     """Parse 'show vlan' output to get list of existing VLAN IDs"""
     existing_vlans = []
     
-    # Pattern: VLAN ID am Anfang einer Zeile, gefolgt von Name und Status
-    # Beispiel: "10        Management                       active"
-    pattern = r'^\s*(\d+)\s+\S+\s+(?:active|suspend)'
+    # Pattern: VLAN ID at start of line, followed by name and status
+    # Example: "10        Management                       active"
+    # Also match "creating" status for VLANs being created
+    pattern = r'^\s*(\d+)\s+\S+\s+(?:active|suspend|creating)'
     
     for line in output.split('\n'):
         match = re.match(pattern, line)
@@ -130,22 +288,51 @@ def parse_existing_vlans(output):
 def create_batch_vlan_script(host, username, password, vlans, hostname, mode, protected_vlans, vlans_to_delete):
     """Generate expect script for BATCH VLAN creation with error handling"""
     
-    # Delete-Befehle generieren (nur bei mode=replace)
+    # Generate delete commands (only for mode=replace)
     delete_commands = ""
     if mode == "replace" and vlans_to_delete:
         for vlan_id in vlans_to_delete:
             delete_commands += f'''send "no vlan {vlan_id}\\r"
-expect "{hostname}(config)#"
+expect {{
+    "{hostname}(config)#" {{}}
+    "Invalid" {{
+        puts "WARNING_DELETE_FAILED: Could not delete VLAN {vlan_id}"
+    }}
+    timeout {{
+        puts "ERROR_DELETE_TIMEOUT: Timeout deleting VLAN {vlan_id}"
+        exit 1
+    }}
+}}
 '''
     
-    # Create-Befehle generieren
+    # Generate create commands
     create_commands = ""
     for vlan in vlans:
         if vlan['id'] not in protected_vlans:
+            escaped_name = escape_vlan_name(vlan['name'])
             create_commands += f'''send "vlan {vlan['id']}\\r"
-expect "{hostname}(config-vlan)#"
-send "name {vlan['name']}\\r"
-expect "{hostname}(config-vlan)#"
+expect {{
+    "{hostname}(config-vlan)#" {{}}
+    "Invalid" {{
+        puts "ERROR_INVALID_VLAN: Invalid VLAN ID {vlan['id']}"
+        exit 1
+    }}
+    timeout {{
+        puts "ERROR_VLAN_TIMEOUT: Timeout creating VLAN {vlan['id']}"
+        exit 1
+    }}
+}}
+send "name {escaped_name}\\r"
+expect {{
+    "{hostname}(config-vlan)#" {{}}
+    "Invalid" {{
+        puts "WARNING_NAME_FAILED: Could not set name for VLAN {vlan['id']}"
+    }}
+    timeout {{
+        puts "ERROR_NAME_TIMEOUT: Timeout setting name for VLAN {vlan['id']}"
+        exit 1
+    }}
+}}
 send "exit\\r"
 expect "{hostname}(config)#"
 '''
@@ -155,7 +342,7 @@ set timeout 30
 log_user 1
 
 # === CONNECTION PHASE ===
-spawn ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=10 {username}@{host}
+spawn ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=20 {username}@{host}
 
 expect {{
     "No route to host" {{
@@ -269,46 +456,55 @@ def analyze_output(stdout, stderr):
     """Analyze expect output for errors and return appropriate message"""
     
     error_patterns = {
-        "ERROR_CONNECTION_FAILED": "Verbindung fehlgeschlagen: Host nicht erreichbar",
-        "ERROR_CONNECTION_REFUSED": "Verbindung abgelehnt: SSH-Port nicht offen",
-        "ERROR_CONNECTION_TIMEOUT": "Verbindungs-Timeout: Host antwortet nicht",
-        "ERROR_HOST_UNREACHABLE": "Host nicht erreichbar: Netzwerkproblem",
-        "ERROR_DNS_FAILED": "DNS-Auflösung fehlgeschlagen",
-        "ERROR_AUTH_FAILED": "Authentifizierung fehlgeschlagen: Falscher Benutzername oder Passwort",
-        "ERROR_ENABLE_PASSWORD": "Enable-Passwort erforderlich",
-        "ERROR_ENABLE_TIMEOUT": "Timeout beim Wechsel in Enable-Modus",
-        "ERROR_CONFIG_TIMEOUT": "Timeout beim Wechsel in Config-Modus",
-        "ERROR_SAVE_TIMEOUT": "Timeout beim Speichern der Konfiguration",
+        "ERROR_CONNECTION_FAILED": "Connection failed: No route to host",
+        "ERROR_CONNECTION_REFUSED": "Connection refused: SSH port not open",
+        "ERROR_CONNECTION_TIMEOUT": "Connection timeout: Host not responding",
+        "ERROR_HOST_UNREACHABLE": "Host unreachable: Network problem",
+        "ERROR_DNS_FAILED": "DNS resolution failed",
+        "ERROR_AUTH_FAILED": "Authentication failed: Wrong username or password",
+        "ERROR_ENABLE_PASSWORD": "Enable password required",
+        "ERROR_ENABLE_TIMEOUT": "Timeout entering enable mode",
+        "ERROR_CONFIG_TIMEOUT": "Timeout entering config mode",
+        "ERROR_SAVE_TIMEOUT": "Timeout saving configuration",
+        "ERROR_DELETE_TIMEOUT": "Timeout deleting VLAN",
+        "ERROR_VLAN_TIMEOUT": "Timeout creating VLAN",
+        "ERROR_NAME_TIMEOUT": "Timeout setting VLAN name",
+        "ERROR_INVALID_VLAN": "Invalid VLAN ID",
     }
     
     ssh_errors = {
-        "No route to host": "Verbindung fehlgeschlagen: Keine Route zum Host",
-        "Connection refused": "Verbindung abgelehnt: SSH-Dienst nicht erreichbar",
-        "Connection timed out": "Verbindungs-Timeout: Host antwortet nicht",
-        "Host is unreachable": "Host nicht erreichbar",
-        "Permission denied": "Authentifizierung fehlgeschlagen: Falscher Benutzername oder Passwort",
+        "No route to host": "Connection failed: No route to host",
+        "Connection refused": "Connection refused: SSH service not reachable",
+        "Connection timed out": "Connection timeout: Host not responding",
+        "Host is unreachable": "Host unreachable",
+        "Permission denied": "Authentication failed: Wrong username or password",
     }
     
     combined = stdout + stderr
     
+    # Check for our custom error markers first
     for error_key, error_msg in error_patterns.items():
         if error_key in combined:
             return False, error_msg
     
+    # Check for raw SSH errors
     for ssh_error, error_msg in ssh_errors.items():
         if ssh_error in combined:
             return False, error_msg
     
+    # Check for success
     if "SUCCESS_COMPLETE" in combined or "SUCCESS_CONFIG_SAVED" in combined or "SUCCESS_CHECK_COMPLETE" in combined:
         return True, None
     
-    if "TIMEOUT" in combined:
-        return False, "Timeout während der Konfiguration"
+    # Check for timeout markers
+    if "TIMEOUT" in combined.upper():
+        return False, "Timeout during configuration"
     
-    if "Saving user config OK!" in combined or "copy running-config startup-config" in combined:
+    # Fallback success check
+    if "Saving user config OK!" in combined:
         return True, None
     
-    return False, "Unbekannter Fehler - bitte stdout prüfen"
+    return False, "Unknown error - check stdout"
 
 
 def run_expect_script(script_content, timeout=180):
@@ -353,43 +549,46 @@ def main():
     mode = module.params['mode']
     protected_vlans = module.params['protected_vlans']
     
-    # Ziel-VLAN-IDs extrahieren
+    # Validate VLAN list
+    validate_vlans(module, vlans, protected_vlans)
+    
+    # Extract target VLAN IDs
     target_vlan_ids = [v['id'] for v in vlans]
     
-    # Bei mode=replace: Erst existierende VLANs abfragen
+    # For mode=replace: First query existing VLANs
     vlans_to_delete = []
     existing_vlans = []
     
     if mode == "replace":
-        # Phase 1: show vlan ausführen
+        # Phase 1: Execute show vlan
         check_script = create_check_vlan_script(host, username, password, hostname)
         
         try:
             stdout, stderr, returncode = run_expect_script(check_script, timeout=60)
         except subprocess.TimeoutExpired:
-            module.fail_json(msg="Timeout beim Abfragen der VLANs", host=host)
+            module.fail_json(msg="Timeout querying VLANs", host=host)
         except Exception as e:
-            module.fail_json(msg=f"Fehler beim Abfragen der VLANs: {str(e)}", host=host)
+            module.fail_json(msg=f"Error querying VLANs: {str(e)}", host=host)
         
-        # Prüfe auf Verbindungsfehler
+        # Check for connection errors
         success, error_msg = analyze_output(stdout, stderr)
         if not success:
             module.fail_json(
-                msg=f"VLAN-Abfrage fehlgeschlagen: {error_msg}",
+                msg=f"VLAN query failed: {error_msg}",
                 host=host,
                 stdout=stdout,
                 stderr=stderr
             )
         
-        # Parse existierende VLANs
+        # Parse existing VLANs
         existing_vlans = parse_existing_vlans(stdout)
         
-        # Nur existierende VLANs löschen (außer protected und target)
+        # Only delete existing VLANs (except protected and target)
         for vlan_id in existing_vlans:
             if vlan_id not in protected_vlans and vlan_id not in target_vlan_ids:
                 vlans_to_delete.append(vlan_id)
     
-    # Phase 2: VLANs konfigurieren
+    # Phase 2: Configure VLANs
     script = create_batch_vlan_script(
         host, username, password, vlans, hostname, mode, protected_vlans, vlans_to_delete
     )
@@ -398,31 +597,32 @@ def main():
         stdout, stderr, returncode = run_expect_script(script, timeout=180)
     except subprocess.TimeoutExpired:
         module.fail_json(
-            msg="Gesamttimeout überschritten (180s) - Switch antwortet nicht",
+            msg="Total timeout exceeded (180s) - switch not responding",
             host=host
         )
     except Exception as e:
-        module.fail_json(msg=f"Unerwarteter Fehler: {str(e)}", host=host)
+        module.fail_json(msg=f"Unexpected error: {str(e)}", host=host)
     
-    # Analysiere Output
+    # Analyze output
     success, error_msg = analyze_output(stdout, stderr)
     
     if not success:
         module.fail_json(
-            msg=f"VLAN-Konfiguration fehlgeschlagen: {error_msg}",
+            msg=f"VLAN configuration failed: {error_msg}",
             host=host,
             stdout=stdout,
             stderr=stderr,
             return_code=returncode
         )
     
-    # Zähle Operationen
+    # Count operations
     vlans_created = len([v for v in vlans if v['id'] not in protected_vlans])
     vlans_deleted = len(vlans_to_delete)
     
     module.exit_json(
         changed=True,
         msg=f"Mode '{mode}': Created {vlans_created} VLANs" + (f", deleted {vlans_deleted} VLANs" if vlans_deleted > 0 else ""),
+        host=host,
         mode=mode,
         vlans_created=vlans_created,
         vlans_deleted=vlans_deleted,

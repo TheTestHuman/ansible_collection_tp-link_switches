@@ -1,6 +1,41 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+"""
+TP-Link SG3210 Port Security Configuration Module
+
+Configures MAC address-based port security on TP-Link SG3210 Managed Switches via SSH.
+
+Features:
+    - Limits the number of MAC addresses that can be learned on a port
+    - Supports different learning modes (dynamic, static, permanent)
+    - Supports different violation actions (forward, drop, disable)
+    - Exceed notification when max MAC count is reached
+
+Parameters:
+    host: Switch IP address
+    username: SSH username
+    password: SSH password
+    port: Port number (1-10)
+    max_mac_count: Maximum MAC addresses allowed (0-64, default: 1)
+    mode: Learning mode - dynamic, static, permanent (default: dynamic)
+    status: Violation action - forward, drop, disable (default: forward)
+    exceed_notification: Enable notification on exceed (default: false)
+    state: present or absent (default: present)
+    hostname: CLI prompt hostname (default: SG3210)
+
+Example:
+    - tp_link_port_security_expect:
+        host: "10.0.10.1"
+        username: "admin"
+        password: "secret"
+        port: 2
+        max_mac_count: 1
+        mode: permanent
+        status: drop
+        exceed_notification: true
+"""
+
 from ansible.module_utils.basic import AnsibleModule
 import subprocess
 import tempfile
@@ -8,12 +43,11 @@ import os
 
 DOCUMENTATION = r'''
 module: tp_link_port_security_expect
-short_description: Configure Port Security on TP-Link switches
+short_description: Configure Port Security on TP-Link SG3210 switches
 description:
     - Configures MAC address-based port security on TP-Link switches
     - Limits the number of MAC addresses that can be learned on a port
     - Supports different learning modes and violation actions
-    - Flexible prompts for different switch models
 options:
     host:
         description: Switch IP address
@@ -40,7 +74,7 @@ options:
         default: "dynamic"
         choices: ['dynamic', 'static', 'permanent']
     status:
-        description: Port security status/action
+        description: Port security status/action on violation
         required: false
         default: "forward"
         choices: ['forward', 'drop', 'disable']
@@ -58,26 +92,6 @@ options:
         description: Switch hostname for expect prompts
         required: false
         default: "SG3210"
-    user_prompt:
-        description: User mode prompt
-        required: false
-        default: ">"
-    enable_prompt:
-        description: Enable mode prompt
-        required: false
-        default: "#"
-    config_prompt:
-        description: Config mode prompt
-        required: false
-        default: "(config)#"
-    interface_prompt:
-        description: Interface config mode prompt
-        required: false
-        default: "(config-if)#"
-    save_success_msg:
-        description: Success message after saving config
-        required: false
-        default: "Saving user config OK!"
 '''
 
 EXAMPLES = r'''
@@ -85,7 +99,7 @@ EXAMPLES = r'''
 - tp_link_port_security_expect:
     host: 10.0.10.1
     username: admin
-    password: neinnein
+    password: secret
     port: 2
     max_mac_count: 1
     mode: permanent
@@ -96,7 +110,7 @@ EXAMPLES = r'''
 - tp_link_port_security_expect:
     host: 10.0.10.1
     username: admin
-    password: neinnein
+    password: secret
     port: 3
     max_mac_count: 5
     mode: dynamic
@@ -106,7 +120,7 @@ EXAMPLES = r'''
 - tp_link_port_security_expect:
     host: 10.0.10.1
     username: admin
-    password: neinnein
+    password: secret
     port: 2
     state: absent
 
@@ -119,100 +133,312 @@ EXAMPLES = r'''
     hostname: "OFFICE-SW1"
 '''
 
+
 def create_port_security_script(host, username, password, port, 
                                  max_mac_count, mode, status, 
-                                 exceed_notification, state,
-                                 hostname, user_prompt, enable_prompt,
-                                 config_prompt, interface_prompt,
-                                 save_success_msg):
-    """Generate expect script for port security configuration"""
+                                 exceed_notification, state, hostname):
+    """Generate expect script for port security configuration with robust error handling"""
     
-    script = f'''#!/usr/bin/expect -f
-set timeout 30
-
-# Connect via SSH
-spawn ssh -o PubkeyAuthentication=no {username}@{host}
-expect "password:"
-send "{password}\\r"
-expect "{hostname}{user_prompt}"
-
-# Enter privileged mode
-send "enable\\r"
-expect "{hostname}{enable_prompt}"
-
-# Enter configuration mode
-send "configure\\r"
-expect "{hostname}{config_prompt}"
-
-# Configure interface
-send "interface gigabitEthernet 1/0/{port}\\r"
-expect "{hostname}{interface_prompt}"
-'''
-
+    # Build configuration commands based on state
     if state == 'present':
-        # Enable port security
-        script += f'''
+        config_commands = f'''
+# === CONFIGURE PORT SECURITY ===
 # Configure max MAC count
 send "mac address-table max-mac-count max-number {max_mac_count}\\r"
-expect "{hostname}{interface_prompt}"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    "Invalid" {{
+        puts "ERROR_INVALID_COMMAND: Invalid max-mac-count value"
+        exit 1
+    }}
+    timeout {{
+        puts "ERROR_CONFIG_TIMEOUT: Timeout configuring max-mac-count"
+        exit 1
+    }}
+}}
 
 # Configure learning mode
 send "mac address-table max-mac-count mode {mode}\\r"
-expect "{hostname}{interface_prompt}"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    "Invalid" {{
+        puts "ERROR_INVALID_COMMAND: Invalid mode value"
+        exit 1
+    }}
+    timeout {{
+        puts "ERROR_CONFIG_TIMEOUT: Timeout configuring mode"
+        exit 1
+    }}
+}}
 
 # Configure status/action
 send "mac address-table max-mac-count status {status}\\r"
-expect "{hostname}{interface_prompt}"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    "Invalid" {{
+        puts "ERROR_INVALID_COMMAND: Invalid status value"
+        exit 1
+    }}
+    timeout {{
+        puts "ERROR_CONFIG_TIMEOUT: Timeout configuring status"
+        exit 1
+    }}
+}}
 
 # Configure exceed notification
+send "mac address-table max-mac-count exceed-max-learned {'enable' if exceed_notification else 'disable'}\\r"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    "Invalid" {{
+        puts "ERROR_INVALID_COMMAND: Invalid exceed-max-learned value"
+        exit 1
+    }}
+    timeout {{
+        puts "ERROR_CONFIG_TIMEOUT: Timeout configuring exceed notification"
+        exit 1
+    }}
+}}
 '''
-        exceed_action = "enable" if exceed_notification else "disable"
-        script += f'''send "mac address-table max-mac-count exceed-max-learned {exceed_action}\\r"
-expect "{hostname}{interface_prompt}"
-'''
-    
-    elif state == 'absent':
-        # Disable port security
-        script += f'''
+    else:  # state == 'absent'
+        config_commands = f'''
+# === DISABLE PORT SECURITY ===
 # Disable port security
 send "mac address-table max-mac-count status disable\\r"
-expect "{hostname}{interface_prompt}"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    timeout {{
+        puts "ERROR_CONFIG_TIMEOUT: Timeout disabling port security"
+        exit 1
+    }}
+}}
 
 # Reset to defaults
 send "mac address-table max-mac-count max-number 64\\r"
-expect "{hostname}{interface_prompt}"
+expect "{hostname}(config-if)#"
+
 send "mac address-table max-mac-count mode dynamic\\r"
-expect "{hostname}{interface_prompt}"
+expect "{hostname}(config-if)#"
+
 send "mac address-table max-mac-count exceed-max-learned disable\\r"
-expect "{hostname}{interface_prompt}"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    timeout {{
+        puts "ERROR_CONFIG_TIMEOUT: Timeout resetting to defaults"
+        exit 1
+    }}
+}}
 '''
 
-    # Exit and save
-    script += f'''
-# Exit interface configuration
-send "exit\\r"
-expect "{hostname}{config_prompt}"
+    script = f'''#!/usr/bin/expect -f
+set timeout 30
+log_user 1
 
-# Exit configuration mode
-send "exit\\r"
-expect "{hostname}{enable_prompt}"
+# === CONNECTION PHASE ===
+spawn ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=20 {username}@{host}
 
-# Save configuration
+expect {{
+    "No route to host" {{
+        puts "ERROR_CONNECTION_FAILED: No route to host {host}"
+        exit 1
+    }}
+    "Connection refused" {{
+        puts "ERROR_CONNECTION_REFUSED: Connection refused by {host}"
+        exit 1
+    }}
+    "Connection timed out" {{
+        puts "ERROR_CONNECTION_TIMEOUT: Connection to {host} timed out"
+        exit 1
+    }}
+    "Host is unreachable" {{
+        puts "ERROR_HOST_UNREACHABLE: Host {host} is unreachable"
+        exit 1
+    }}
+    "Name or service not known" {{
+        puts "ERROR_DNS_FAILED: Could not resolve hostname {host}"
+        exit 1
+    }}
+    "password:" {{
+        send "{password}\\r"
+    }}
+    timeout {{
+        puts "ERROR_CONNECTION_TIMEOUT: Timeout connecting to {host}"
+        exit 1
+    }}
+}}
+
+# === LOGIN PHASE ===
+expect {{
+    "Permission denied" {{
+        puts "ERROR_AUTH_FAILED: Authentication failed - wrong username or password"
+        exit 1
+    }}
+    "Access denied" {{
+        puts "ERROR_AUTH_FAILED: Access denied - wrong username or password"
+        exit 1
+    }}
+    "{hostname}>" {{
+        # Login successful
+    }}
+    timeout {{
+        puts "ERROR_AUTH_FAILED: Login timeout - check username/password"
+        exit 1
+    }}
+}}
+
+# === ENABLE MODE ===
+send "enable\\r"
+expect {{
+    "{hostname}#" {{}}
+    "Password:" {{
+        puts "ERROR_ENABLE_PASSWORD: Enable password required but not provided"
+        exit 1
+    }}
+    timeout {{
+        puts "ERROR_ENABLE_TIMEOUT: Timeout entering enable mode"
+        exit 1
+    }}
+}}
+
+# === CONFIGURE MODE ===
+send "configure\\r"
+expect {{
+    "{hostname}(config)#" {{}}
+    timeout {{
+        puts "ERROR_CONFIG_TIMEOUT: Timeout entering config mode"
+        exit 1
+    }}
+}}
+
+# === INTERFACE MODE ===
+send "interface gigabitEthernet 1/0/{port}\\r"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    "Invalid" {{
+        puts "ERROR_INVALID_PORT: Invalid port number {port}"
+        exit 1
+    }}
+    timeout {{
+        puts "ERROR_INTERFACE_TIMEOUT: Timeout entering interface config for port {port}"
+        exit 1
+    }}
+}}
+
+{config_commands}
+
+# === EXIT AND SAVE ===
+send "exit\\r"
+expect "{hostname}(config)#"
+
+send "exit\\r"
+expect "{hostname}#"
+
 send "copy running-config startup-config\\r"
-expect "{save_success_msg}"
+expect {{
+    "Saving user config OK!" {{
+        puts "SUCCESS_CONFIG_SAVED"
+    }}
+    "Succeed" {{
+        puts "SUCCESS_CONFIG_SAVED"
+    }}
+    timeout {{
+        puts "ERROR_SAVE_TIMEOUT: Timeout saving configuration"
+        exit 1
+    }}
+}}
 
-# Exit
+# === LOGOUT ===
 send "exit\\r"
-expect "{hostname}{user_prompt}"
+expect "{hostname}>"
 send "exit\\r"
 expect {{
-    eof {{ }}
-    "Connection closed" {{ }}
-    timeout {{ }}
+    eof {{}}
+    "Connection closed" {{}}
+    timeout {{}}
 }}
+
+puts "SUCCESS_COMPLETE"
 '''
     
     return script
+
+
+def analyze_output(stdout, stderr):
+    """Analyze expect output for errors and return appropriate message"""
+    
+    error_patterns = {
+        "ERROR_CONNECTION_FAILED": "Connection failed: No route to host",
+        "ERROR_CONNECTION_REFUSED": "Connection refused: SSH port not open",
+        "ERROR_CONNECTION_TIMEOUT": "Connection timeout: Host not responding",
+        "ERROR_HOST_UNREACHABLE": "Host unreachable: Network problem",
+        "ERROR_DNS_FAILED": "DNS resolution failed",
+        "ERROR_AUTH_FAILED": "Authentication failed: Wrong username or password",
+        "ERROR_ENABLE_PASSWORD": "Enable password required",
+        "ERROR_ENABLE_TIMEOUT": "Timeout entering enable mode",
+        "ERROR_CONFIG_TIMEOUT": "Timeout during configuration",
+        "ERROR_INTERFACE_TIMEOUT": "Timeout entering interface config",
+        "ERROR_INVALID_PORT": "Invalid port number",
+        "ERROR_INVALID_COMMAND": "Invalid command or parameter",
+        "ERROR_SAVE_TIMEOUT": "Timeout saving configuration",
+    }
+    
+    ssh_errors = {
+        "No route to host": "Connection failed: No route to host",
+        "Connection refused": "Connection refused: SSH service not reachable",
+        "Connection timed out": "Connection timeout: Host not responding",
+        "Host is unreachable": "Host unreachable",
+        "Permission denied": "Authentication failed: Wrong username or password",
+    }
+    
+    combined = stdout + stderr
+    
+    # Check for our custom error markers first
+    for error_key, error_msg in error_patterns.items():
+        if error_key in combined:
+            return False, error_msg
+    
+    # Check for raw SSH errors
+    for ssh_error, error_msg in ssh_errors.items():
+        if ssh_error in combined:
+            return False, error_msg
+    
+    # Check for success
+    if "SUCCESS_COMPLETE" in combined or "SUCCESS_CONFIG_SAVED" in combined:
+        return True, None
+    
+    # Check for "bad command" or other errors in output
+    if "bad command" in combined.lower() or "invalid" in combined.lower():
+        return False, "Invalid command - check switch firmware compatibility"
+    
+    # Check for timeout markers
+    if "TIMEOUT" in combined.upper():
+        return False, "Timeout during configuration"
+    
+    # If we got "Saving user config OK!" that's also success
+    if "Saving user config OK!" in combined:
+        return True, None
+    
+    return False, "Unknown error - check stdout"
+
+
+def run_expect_script(script_content, timeout=60):
+    """Run an expect script and return the result"""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.exp', delete=False) as f:
+        f.write(script_content)
+        script_path = f.name
+    
+    try:
+        os.chmod(script_path, 0o700)
+        result = subprocess.run(
+            [script_path],
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+        return result.stdout, result.stderr, result.returncode
+    finally:
+        if os.path.exists(script_path):
+            os.unlink(script_path)
+
 
 def main():
     module = AnsibleModule(
@@ -229,90 +455,81 @@ def main():
             exceed_notification=dict(type='bool', required=False, default=False),
             state=dict(type='str', required=False, default='present',
                       choices=['present', 'absent']),
-            # Flexible prompts
             hostname=dict(type='str', required=False, default='SG3210'),
-            user_prompt=dict(type='str', required=False, default='>'),
-            enable_prompt=dict(type='str', required=False, default='#'),
-            config_prompt=dict(type='str', required=False, default='(config)#'),
-            interface_prompt=dict(type='str', required=False, default='(config-if)#'),
-            save_success_msg=dict(type='str', required=False, default='Saving user config OK!'),
         ),
         supports_check_mode=False
     )
     
+    host = module.params['host']
+    username = module.params['username']
+    password = module.params['password']
+    port = module.params['port']
+    max_mac_count = module.params['max_mac_count']
+    mode = module.params['mode']
+    status = module.params['status']
+    exceed_notification = module.params['exceed_notification']
+    state = module.params['state']
+    hostname = module.params['hostname']
+    
     # Validate port
-    if not 1 <= module.params['port'] <= 10:
-        module.fail_json(msg="Port must be between 1 and 10")
+    if not 1 <= port <= 10:
+        module.fail_json(msg=f"Port must be between 1 and 10, got {port}")
     
     # Validate max_mac_count
-    if not 0 <= module.params['max_mac_count'] <= 64:
-        module.fail_json(msg="max_mac_count must be between 0 and 64")
+    if not 0 <= max_mac_count <= 64:
+        module.fail_json(msg=f"max_mac_count must be between 0 and 64, got {max_mac_count}")
     
     # Generate expect script
     try:
         script = create_port_security_script(
-            module.params['host'],
-            module.params['username'],
-            module.params['password'],
-            module.params['port'],
-            module.params['max_mac_count'],
-            module.params['mode'],
-            module.params['status'],
-            module.params['exceed_notification'],
-            module.params['state'],
-            module.params['hostname'],
-            module.params['user_prompt'],
-            module.params['enable_prompt'],
-            module.params['config_prompt'],
-            module.params['interface_prompt'],
-            module.params['save_success_msg']
+            host, username, password, port,
+            max_mac_count, mode, status,
+            exceed_notification, state, hostname
         )
     except Exception as e:
         module.fail_json(msg=f"Error generating script: {str(e)}")
     
-    # Write to temp file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.exp', delete=False) as f:
-        f.write(script)
-        script_path = f.name
-    
+    # Run script
     try:
-        os.chmod(script_path, 0o700)
-        result = subprocess.run([script_path], capture_output=True, text=True, timeout=60)
-        
-        # Check for errors
-        if "error" in result.stdout.lower() or "bad command" in result.stdout.lower():
-            if os.path.exists(script_path):
-                os.unlink(script_path)
-            module.fail_json(
-                msg=f"Port security configuration failed on port {module.params['port']}",
-                stdout=result.stdout
-            )
-        
-        os.unlink(script_path)
-        
-        action = "configured" if module.params['state'] == 'present' else "disabled"
-        
-        module.exit_json(
-            changed=True,
-            msg=f"Port security {action} on port {module.params['port']}",
-            port_security={
-                'port': module.params['port'],
-                'max_mac_count': module.params['max_mac_count'],
-                'mode': module.params['mode'],
-                'status': module.params['status'],
-                'exceed_notification': module.params['exceed_notification'],
-                'state': module.params['state']
-            },
-            stdout=result.stdout
-        )
+        stdout, stderr, returncode = run_expect_script(script, timeout=60)
     except subprocess.TimeoutExpired:
-        if os.path.exists(script_path):
-            os.unlink(script_path)
-        module.fail_json(msg="Timeout during port security configuration - check switch connectivity")
+        module.fail_json(
+            msg="Total timeout exceeded (60s) - switch not responding",
+            host=host
+        )
     except Exception as e:
-        if os.path.exists(script_path):
-            os.unlink(script_path)
-        module.fail_json(msg=f"Port security configuration error: {str(e)}")
+        module.fail_json(msg=f"Unexpected error: {str(e)}", host=host)
+    
+    # Analyze output
+    success, error_msg = analyze_output(stdout, stderr)
+    
+    if not success:
+        module.fail_json(
+            msg=f"Port security configuration failed: {error_msg}",
+            host=host,
+            port=port,
+            stdout=stdout,
+            stderr=stderr,
+            return_code=returncode
+        )
+    
+    action = "configured" if state == 'present' else "disabled"
+    
+    module.exit_json(
+        changed=True,
+        msg=f"Port security {action} on port {port}",
+        host=host,
+        port_security={
+            'port': port,
+            'max_mac_count': max_mac_count,
+            'mode': mode,
+            'status': status,
+            'exceed_notification': exceed_notification,
+            'state': state
+        },
+        stdout=stdout
+    )
+
 
 if __name__ == '__main__':
     main()

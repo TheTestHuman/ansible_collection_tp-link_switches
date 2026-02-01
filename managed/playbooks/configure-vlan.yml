@@ -1,0 +1,107 @@
+---
+# =============================================================================
+# Configure VLANs on TP-Link SG3210 Switches
+# =============================================================================
+#
+# This playbook configures VLANs on TP-Link SG3210 switches.
+# Unreachable switches are detected early and skipped.
+#
+# Usage:
+#   ansible-playbook playbooks/configure-vlans.yml
+#
+# Variables can be overridden:
+#   ansible-playbook playbooks/configure-vlans.yml -e "vlan_mode=replace"
+#
+# =============================================================================
+
+- name: Configure VLANs on SG3210 Switches
+  hosts: managed_switches
+  gather_facts: no
+  
+  vars:
+    # -------------------------------------------------------------------------
+    # VLAN Configuration
+    # -------------------------------------------------------------------------
+    vlans:
+      - id: 10
+        name: "Management"
+      - id: 20
+        name: "Clients"
+      - id: 30
+        name: "Servers"
+      - id: 40
+        name: "Guest"
+      - id: 50
+        name: "IoT"
+    
+    # -------------------------------------------------------------------------
+    # Operation Mode
+    # -------------------------------------------------------------------------
+    # "add"     - Only add VLANs, do not delete existing ones
+    # "replace" - Query existing VLANs, delete non-protected, then create new
+    vlan_mode: "add"
+    
+    # -------------------------------------------------------------------------
+    # Protected VLANs (never deleted in replace mode)
+    # -------------------------------------------------------------------------
+    protected_vlans: [1]
+    
+    # -------------------------------------------------------------------------
+    # Connectivity Settings
+    # -------------------------------------------------------------------------
+    ssh_check_timeout: 5
+    
+  tasks:
+    # =========================================================================
+    # PRE-FLIGHT: Check SSH Connectivity
+    # =========================================================================
+    
+    - name: "PRE-CHECK: Verify switch is reachable via SSH"
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        timeout: "{{ ssh_check_timeout }}"
+      register: ssh_check
+      ignore_errors: yes
+      
+    - name: "PRE-CHECK: Skip unreachable switches"
+      meta: end_host
+      when: ssh_check is failed
+      
+    # =========================================================================
+    # VLAN CONFIGURATION
+    # =========================================================================
+    
+    - name: "Configure VLANs (mode: {{ vlan_mode }})"
+      tp_link_batch_vlan_expect:
+        host: "{{ ansible_host }}"
+        username: "{{ ansible_user | default('admin') }}"
+        password: "{{ ansible_password | default('neinnein') }}"
+        hostname: "{{ cli.hostname | default('SG3210') }}"
+        vlans: "{{ vlans }}"
+        mode: "{{ vlan_mode }}"
+        protected_vlans: "{{ protected_vlans }}"
+      register: vlan_result
+      
+    # =========================================================================
+    # SUMMARY
+    # =========================================================================
+    
+    - name: "Display VLAN configuration result"
+      debug:
+        msg:
+          - "================================================"
+          - "VLAN Configuration Completed"
+          - "================================================"
+          - "Host: {{ ansible_host }}"
+          - "Mode: {{ vlan_mode }}"
+          - "VLANs created: {{ vlan_result.vlans_created }}"
+          - "VLANs deleted: {{ vlan_result.vlans_deleted | default(0) }}"
+          - "Protected VLANs: {{ protected_vlans }}"
+          - "================================================"
+          - ""
+          - "Configured VLANs:"
+          - "{% for vlan in vlans %}  - VLAN {{ vlan.id }}: {{ vlan.name }}\n{% endfor %}"
+          - ""
+          - "Verify with: show vlan"
+          - "================================================"

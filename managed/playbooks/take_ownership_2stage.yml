@@ -1,21 +1,81 @@
 ---
+# =============================================================================
+# Take Ownership of Factory-Reset SG3210 Switch (2-Stage Process)
+# =============================================================================
+#
+# This playbook configures a factory-reset TP-Link SG3210 switch in two stages:
+#   Stage 1: Set admin password and enable SSH (via Telnet)
+#   Stage 2: Change IP address to target network (via SSH)
+#
+# Prerequisites:
+#   - Workstation must be in same network as factory-default switch (192.168.0.x)
+#   - Factory-reset switch is at 192.168.0.1 with admin/admin credentials
+#   - expect package must be installed on control node
+#
+# Usage:
+#   ansible-playbook take_ownership_2stage.yml
+#
+# After completion:
+#   - Change workstation IP to target network (e.g., 10.0.10.x)
+#   - Access switch at new IP via SSH
+#
+# =============================================================================
+
 - name: Take Ownership of Factory-Reset SG3210 Switch (2-Stage Process)
   hosts: localhost
   gather_facts: no
   
   vars:
-    # Default values for factory-reset switch
+    # -------------------------------------------------------------------------
+    # Factory Default Settings (usually no need to change)
+    # -------------------------------------------------------------------------
     factory_default_ip: "192.168.0.1"
     factory_default_user: "admin"
     factory_default_password: "admin"
     
-    # New configuration
+    # -------------------------------------------------------------------------
+    # New Switch Configuration (CUSTOMIZE THESE)
+    # -------------------------------------------------------------------------
     switch_new_password: "neinnein"
     switch_new_ip: "10.0.10.1"
     switch_new_netmask: "255.255.255.0"
     switch_new_gateway: "10.0.10.254"
+    switch_hostname: "SG3210"
+    
+    # -------------------------------------------------------------------------
+    # Timing Settings
+    # -------------------------------------------------------------------------
+    ssh_startup_delay: 5          # Seconds to wait for SSH to start
+    ssh_port_timeout: 30          # Seconds to wait for SSH port
     
   tasks:
+    # =========================================================================
+    # PRE-FLIGHT CHECKS
+    # =========================================================================
+    
+    - name: "PRE-CHECK: Verify factory IP is reachable"
+      wait_for:
+        host: "{{ factory_default_ip }}"
+        port: 23
+        timeout: 10
+      register: telnet_check
+      ignore_errors: yes
+      
+    - name: "PRE-CHECK: Fail if switch not reachable"
+      fail:
+        msg: |
+          Cannot reach switch at {{ factory_default_ip }}:23 (Telnet)
+          
+          Please verify:
+          1. Switch is powered on and connected
+          2. Your workstation IP is in 192.168.0.x range
+          3. Switch is factory-reset (default IP: 192.168.0.1)
+      when: telnet_check is failed
+
+    # =========================================================================
+    # STAGE 1: Initial Setup via Telnet
+    # =========================================================================
+    
     - name: "STAGE 1: Set password and enable SSH (via Telnet)"
       tp_link_initial_setup:
         default_ip: "{{ factory_default_ip }}"
@@ -23,33 +83,46 @@
         default_password: "{{ factory_default_password }}"
         new_password: "{{ switch_new_password }}"
         enable_ssh: true
+        hostname: "{{ switch_hostname }}"
       register: stage1_result
       
-    - name: Display Stage 1 result
+    - name: "STAGE 1: Display result"
       debug:
-        msg: "Stage 1 completed: Password set, SSH enabled on {{ factory_default_ip }}"
+        msg: "Stage 1 completed: {{ stage1_result.msg }}"
         
-    - name: Wait a moment for SSH to be fully active
+    # =========================================================================
+    # INTER-STAGE: Wait for SSH
+    # =========================================================================
+        
+    - name: "WAIT: Give SSH service time to start"
       pause:
-        seconds: 5
+        seconds: "{{ ssh_startup_delay }}"
         
-    - name: Test if SSH port is open
+    - name: "WAIT: Verify SSH port is open"
       wait_for:
         host: "{{ factory_default_ip }}"
         port: 22
-        timeout: 10
+        timeout: "{{ ssh_port_timeout }}"
       register: ssh_port_test
       ignore_errors: yes
       
-    - name: SSH port test result
+    - name: "WAIT: SSH port status"
       debug:
-        msg: "SSH port 22 is open on {{ factory_default_ip }}"
+        msg: "SSH port 22 is now open on {{ factory_default_ip }}"
       when: ssh_port_test is succeeded
       
-    - name: Fail if SSH port is not open
+    - name: "WAIT: Fail if SSH not available"
       fail:
-        msg: "SSH port is not open! Cannot proceed to Stage 2."
+        msg: |
+          SSH port 22 is not open on {{ factory_default_ip }}
+          
+          Stage 1 may have failed to enable SSH.
+          Please check switch manually via Telnet.
       when: ssh_port_test is failed
+
+    # =========================================================================
+    # STAGE 2: Change IP Address via SSH  
+    # =========================================================================
       
     - name: "STAGE 2: Change IP address (via SSH)"
       tp_link_change_ip:
@@ -59,24 +132,39 @@
         new_ip: "{{ switch_new_ip }}"
         new_netmask: "{{ switch_new_netmask }}"
         new_gateway: "{{ switch_new_gateway }}"
+        hostname: "{{ switch_hostname }}"
       register: stage2_result
       
-    - name: Display Stage 2 result
+    - name: "STAGE 2: Display result"
       debug:
-        msg: "Stage 2 completed: IP changed to {{ switch_new_ip }}"
+        msg: "Stage 2 completed: {{ stage2_result.msg }}"
+
+    # =========================================================================
+    # COMPLETION SUMMARY
+    # =========================================================================
         
-    - name: Important Notice
+    - name: "COMPLETE: Display final configuration"
       debug:
         msg: 
-          - "================================================"
-          - "TAKE OWNERSHIP COMPLETED SUCCESSFULLY!"
-          - "================================================"
-          - "Switch is now configured at: {{ switch_new_ip }}"
-          - "Username: {{ factory_default_user }}"
-          - "Password: {{ switch_new_password }}"
-          - "SSH: Enabled"
-          - "Gateway: {{ switch_new_gateway }}"
+          - "=============================================="
+          - "   TAKE OWNERSHIP COMPLETED SUCCESSFULLY!"
+          - "=============================================="
           - ""
-          - "IMPORTANT: Change your workstation network to 10.0.10.x"
-          - "to access the switch at the new IP address!"
-          - "================================================"
+          - "Switch Configuration:"
+          - "  Hostname:  {{ switch_hostname }}"
+          - "  IP:        {{ switch_new_ip }}"
+          - "  Netmask:   {{ switch_new_netmask }}"
+          - "  Gateway:   {{ switch_new_gateway }}"
+          - "  Username:  {{ factory_default_user }}"
+          - "  Password:  {{ switch_new_password }}"
+          - "  SSH:       Enabled"
+          - ""
+          - "=============================================="
+          - "   NEXT STEPS"
+          - "=============================================="
+          - ""
+          - "1. Change your workstation IP to {{ switch_new_ip | regex_replace('\\.[0-9]+$', '.x') }} range"
+          - "2. Connect via SSH: ssh {{ factory_default_user }}@{{ switch_new_ip }}"
+          - "3. Run additional configuration playbooks as needed"
+          - ""
+          - "=============================================="

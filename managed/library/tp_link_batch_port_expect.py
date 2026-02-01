@@ -4,24 +4,29 @@
 """
 TP-Link SG3210 Batch Port Configuration Module
 
-Konfiguriert Ports auf TP-Link SG3210 Managed Switches via expect.
+Configures ports on TP-Link SG3210 Managed Switches via SSH/expect.
 
-Parameter:
-    host: Switch IP-Adresse
-    username: SSH Username
-    password: SSH Passwort
-    hostname: CLI Prompt Hostname (default: SG3210)
-    mode: "replace" oder "add" (default: add)
-        - replace: Entfernt alle VLANs vom Port, dann konfiguriert neu
-        - add: Fügt VLANs nur hinzu (keine Löschung)
-    trunk_ports: Liste von Trunk-Port-Konfigurationen
-        - port: Port-Nummer (1-10)
-        - vlans: Liste von VLAN-IDs (alle tagged)
-    access_ports: Liste von Access-Port-Konfigurationen
-        - port: Port-Nummer (1-10)
-        - vlan: VLAN-ID (untagged + PVID)
+Features:
+    - Batch configuration of multiple ports in one session
+    - Trunk ports: Multiple VLANs tagged
+    - Access ports: Single VLAN untagged + PVID
+    - Mode 'add': Only adds VLAN memberships (no removal)
+    - Mode 'replace': Removes all VLANs from port first, then configures
 
-Beispiel:
+Parameters:
+    host: Switch IP address
+    username: SSH username
+    password: SSH password
+    hostname: CLI prompt hostname (default: SG3210)
+    mode: "replace" or "add" (default: add)
+    trunk_ports: List of trunk port configurations
+        - port: Port number (1-10)
+        - vlans: List of VLAN IDs (all tagged)
+    access_ports: List of access port configurations
+        - port: Port number (1-10)
+        - vlan: VLAN ID (untagged + PVID)
+
+Example:
     - tp_link_batch_port_expect:
         host: "10.0.10.1"
         username: "admin"
@@ -43,12 +48,178 @@ import tempfile
 import os
 
 
+DOCUMENTATION = r'''
+module: tp_link_batch_port_expect
+short_description: Batch port configuration on TP-Link SG3210 switches
+description:
+    - Configures trunk and access ports on TP-Link SG3210 switches
+    - Supports batch configuration of multiple ports
+    - Mode 'replace' removes existing VLAN memberships first
+    - Mode 'add' only adds VLAN memberships
+options:
+    host:
+        description: Switch IP address
+        required: true
+    username:
+        description: SSH username
+        required: true
+    password:
+        description: SSH password
+        required: true
+        no_log: true
+    hostname:
+        description: Switch hostname for expect prompts
+        required: false
+        default: "SG3210"
+    mode:
+        description: Operation mode - 'add' only adds, 'replace' removes VLANs first
+        required: false
+        default: "add"
+        choices: ['add', 'replace']
+    trunk_ports:
+        description: List of trunk port configurations with 'port' and 'vlans'
+        required: false
+        default: []
+        type: list
+        elements: dict
+    access_ports:
+        description: List of access port configurations with 'port' and 'vlan'
+        required: false
+        default: []
+        type: list
+        elements: dict
+'''
+
+EXAMPLES = r'''
+# Configure trunk and access ports
+- tp_link_batch_port_expect:
+    host: 10.0.10.1
+    username: admin
+    password: secret
+    mode: replace
+    trunk_ports:
+      - port: 1
+        vlans: [1, 10, 20, 30, 40]
+    access_ports:
+      - port: 2
+        vlan: 10
+      - port: 3
+        vlan: 20
+
+# Add VLANs to ports (no removal)
+- tp_link_batch_port_expect:
+    host: 10.0.10.1
+    username: admin
+    password: secret
+    mode: add
+    access_ports:
+      - port: 4
+        vlan: 30
+      - port: 5
+        vlan: 30
+
+# Configure only trunk ports
+- tp_link_batch_port_expect:
+    host: 10.0.10.1
+    username: admin
+    password: secret
+    trunk_ports:
+      - port: 9
+        vlans: [1, 10, 20, 30, 40, 50]
+      - port: 10
+        vlans: [1, 10, 20, 30, 40, 50]
+'''
+
+
+# Constants
+MIN_PORT = 1
+MAX_PORT = 10
+MIN_VLAN = 1
+MAX_VLAN = 4094
+
+
+def validate_port_configs(module, trunk_ports, access_ports):
+    """Validate port configurations and check for conflicts"""
+    
+    all_ports = set()
+    trunk_port_nums = set()
+    access_port_nums = set()
+    
+    # Validate trunk ports
+    for i, trunk in enumerate(trunk_ports):
+        # Check required field 'port'
+        if 'port' not in trunk:
+            module.fail_json(msg=f"Trunk port #{i+1}: Missing required field 'port'")
+        
+        port_num = trunk['port']
+        
+        # Validate port number type
+        if not isinstance(port_num, int):
+            module.fail_json(msg=f"Trunk port #{i+1}: 'port' must be an integer, got {type(port_num).__name__}")
+        
+        # Validate port number range
+        if not MIN_PORT <= port_num <= MAX_PORT:
+            module.fail_json(msg=f"Trunk port {port_num}: Port must be between {MIN_PORT} and {MAX_PORT}")
+        
+        # Check for duplicate ports in trunk_ports
+        if port_num in trunk_port_nums:
+            module.fail_json(msg=f"Trunk port {port_num}: Duplicate port number in trunk_ports list")
+        trunk_port_nums.add(port_num)
+        all_ports.add(port_num)
+        
+        # Validate VLANs
+        vlans = trunk.get('vlans', [])
+        if not isinstance(vlans, list):
+            module.fail_json(msg=f"Trunk port {port_num}: 'vlans' must be a list")
+        
+        for vlan_id in vlans:
+            if not isinstance(vlan_id, int):
+                module.fail_json(msg=f"Trunk port {port_num}: VLAN ID must be an integer, got {type(vlan_id).__name__}")
+            if not MIN_VLAN <= vlan_id <= MAX_VLAN:
+                module.fail_json(msg=f"Trunk port {port_num}: VLAN {vlan_id} must be between {MIN_VLAN} and {MAX_VLAN}")
+    
+    # Validate access ports
+    for i, access in enumerate(access_ports):
+        # Check required field 'port'
+        if 'port' not in access:
+            module.fail_json(msg=f"Access port #{i+1}: Missing required field 'port'")
+        
+        port_num = access['port']
+        
+        # Validate port number type
+        if not isinstance(port_num, int):
+            module.fail_json(msg=f"Access port #{i+1}: 'port' must be an integer, got {type(port_num).__name__}")
+        
+        # Validate port number range
+        if not MIN_PORT <= port_num <= MAX_PORT:
+            module.fail_json(msg=f"Access port {port_num}: Port must be between {MIN_PORT} and {MAX_PORT}")
+        
+        # Check for duplicate ports in access_ports
+        if port_num in access_port_nums:
+            module.fail_json(msg=f"Access port {port_num}: Duplicate port number in access_ports list")
+        access_port_nums.add(port_num)
+        
+        # Check for port conflict (same port in trunk AND access)
+        if port_num in trunk_port_nums:
+            module.fail_json(msg=f"Port {port_num}: Cannot be configured as both trunk and access port")
+        all_ports.add(port_num)
+        
+        # Validate VLAN (optional, defaults to 1)
+        vlan_id = access.get('vlan', 1)
+        if not isinstance(vlan_id, int):
+            module.fail_json(msg=f"Access port {port_num}: 'vlan' must be an integer, got {type(vlan_id).__name__}")
+        if not MIN_VLAN <= vlan_id <= MAX_VLAN:
+            module.fail_json(msg=f"Access port {port_num}: VLAN {vlan_id} must be between {MIN_VLAN} and {MAX_VLAN}")
+    
+    return list(all_ports)
+
+
 def create_batch_port_script(host, username, password, hostname, mode, trunk_ports, access_ports):
     """Generate expect script for BATCH port configuration with error handling"""
     
     port_commands = ""
     
-    # Trunk Ports konfigurieren
+    # Configure trunk ports
     for trunk in trunk_ports:
         port_num = trunk['port']
         vlans = trunk.get('vlans', [])
@@ -58,6 +229,10 @@ def create_batch_port_script(host, username, password, hostname, mode, trunk_por
 send "interface gigabitEthernet 1/0/{port_num}\\r"
 expect {{
     "{hostname}(config-if)#" {{}}
+    "Invalid" {{
+        puts "ERROR_INVALID_PORT: Invalid port number {port_num}"
+        exit 1
+    }}
     timeout {{
         puts "ERROR_PORT_TIMEOUT: Timeout entering interface config for port {port_num}"
         exit 1
@@ -65,26 +240,41 @@ expect {{
 }}
 '''
         
-        # Bei replace: Erst alle VLANs entfernen
+        # For replace mode: Remove all VLANs first
         if mode == "replace":
             port_commands += f'''send "no switchport general allowed vlan all\\r"
-expect "{hostname}(config-if)#"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    timeout {{
+        puts "ERROR_VLAN_TIMEOUT: Timeout removing VLANs from port {port_num}"
+        exit 1
+    }}
+}}
 '''
         
-        # VLANs als tagged hinzufügen
+        # Add VLANs as tagged
         for vlan_id in vlans:
             port_commands += f'''send "switchport general allowed vlan {vlan_id} tagged\\r"
-expect "{hostname}(config-if)#"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    "Invalid" {{
+        puts "WARNING_VLAN_FAILED: Could not add VLAN {vlan_id} to port {port_num}"
+    }}
+    timeout {{
+        puts "ERROR_VLAN_TIMEOUT: Timeout adding VLAN {vlan_id} to port {port_num}"
+        exit 1
+    }}
+}}
 '''
         
-        # PVID auf VLAN 1 setzen (Standard für Trunk)
+        # Set PVID to VLAN 1 (standard for trunk)
         port_commands += f'''send "switchport pvid 1\\r"
 expect "{hostname}(config-if)#"
 send "exit\\r"
 expect "{hostname}(config)#"
 '''
     
-    # Access Ports konfigurieren
+    # Configure access ports
     for access in access_ports:
         port_num = access['port']
         vlan_id = access.get('vlan', 1)
@@ -94,6 +284,10 @@ expect "{hostname}(config)#"
 send "interface gigabitEthernet 1/0/{port_num}\\r"
 expect {{
     "{hostname}(config-if)#" {{}}
+    "Invalid" {{
+        puts "ERROR_INVALID_PORT: Invalid port number {port_num}"
+        exit 1
+    }}
     timeout {{
         puts "ERROR_PORT_TIMEOUT: Timeout entering interface config for port {port_num}"
         exit 1
@@ -101,17 +295,43 @@ expect {{
 }}
 '''
         
-        # Bei replace: Erst alle VLANs entfernen
+        # For replace mode: Remove all VLANs first
         if mode == "replace":
             port_commands += f'''send "no switchport general allowed vlan all\\r"
-expect "{hostname}(config-if)#"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    timeout {{
+        puts "ERROR_VLAN_TIMEOUT: Timeout removing VLANs from port {port_num}"
+        exit 1
+    }}
+}}
 '''
         
-        # VLAN als untagged hinzufügen + PVID setzen
+        # Add VLAN as untagged + set PVID
         port_commands += f'''send "switchport general allowed vlan {vlan_id} untagged\\r"
-expect "{hostname}(config-if)#"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    "Invalid" {{
+        puts "ERROR_INVALID_VLAN: Invalid VLAN {vlan_id} for port {port_num}"
+        exit 1
+    }}
+    timeout {{
+        puts "ERROR_VLAN_TIMEOUT: Timeout adding VLAN {vlan_id} to port {port_num}"
+        exit 1
+    }}
+}}
 send "switchport pvid {vlan_id}\\r"
-expect "{hostname}(config-if)#"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    "Invalid" {{
+        puts "ERROR_INVALID_PVID: Invalid PVID {vlan_id} for port {port_num}"
+        exit 1
+    }}
+    timeout {{
+        puts "ERROR_PVID_TIMEOUT: Timeout setting PVID on port {port_num}"
+        exit 1
+    }}
+}}
 send "exit\\r"
 expect "{hostname}(config)#"
 '''
@@ -121,7 +341,7 @@ set timeout 30
 log_user 1
 
 # === CONNECTION PHASE ===
-spawn ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=10 {username}@{host}
+spawn ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=20 {username}@{host}
 
 expect {{
     "No route to host" {{
@@ -231,28 +451,31 @@ puts "SUCCESS_COMPLETE"
 def analyze_output(stdout, stderr):
     """Analyze expect output for errors and return appropriate message"""
     
-    # Check for specific error patterns
     error_patterns = {
-        "ERROR_CONNECTION_FAILED": "Verbindung fehlgeschlagen: Host nicht erreichbar",
-        "ERROR_CONNECTION_REFUSED": "Verbindung abgelehnt: SSH-Port nicht offen",
-        "ERROR_CONNECTION_TIMEOUT": "Verbindungs-Timeout: Host antwortet nicht",
-        "ERROR_HOST_UNREACHABLE": "Host nicht erreichbar: Netzwerkproblem",
-        "ERROR_DNS_FAILED": "DNS-Auflösung fehlgeschlagen",
-        "ERROR_AUTH_FAILED": "Authentifizierung fehlgeschlagen: Falscher Benutzername oder Passwort",
-        "ERROR_ENABLE_PASSWORD": "Enable-Passwort erforderlich",
-        "ERROR_ENABLE_TIMEOUT": "Timeout beim Wechsel in Enable-Modus",
-        "ERROR_CONFIG_TIMEOUT": "Timeout beim Wechsel in Config-Modus",
-        "ERROR_SAVE_TIMEOUT": "Timeout beim Speichern der Konfiguration",
-        "ERROR_PORT_TIMEOUT": "Timeout bei der Port-Konfiguration",
+        "ERROR_CONNECTION_FAILED": "Connection failed: No route to host",
+        "ERROR_CONNECTION_REFUSED": "Connection refused: SSH port not open",
+        "ERROR_CONNECTION_TIMEOUT": "Connection timeout: Host not responding",
+        "ERROR_HOST_UNREACHABLE": "Host unreachable: Network problem",
+        "ERROR_DNS_FAILED": "DNS resolution failed",
+        "ERROR_AUTH_FAILED": "Authentication failed: Wrong username or password",
+        "ERROR_ENABLE_PASSWORD": "Enable password required",
+        "ERROR_ENABLE_TIMEOUT": "Timeout entering enable mode",
+        "ERROR_CONFIG_TIMEOUT": "Timeout entering config mode",
+        "ERROR_SAVE_TIMEOUT": "Timeout saving configuration",
+        "ERROR_PORT_TIMEOUT": "Timeout during port configuration",
+        "ERROR_INVALID_PORT": "Invalid port number",
+        "ERROR_INVALID_VLAN": "Invalid VLAN ID",
+        "ERROR_INVALID_PVID": "Invalid PVID",
+        "ERROR_VLAN_TIMEOUT": "Timeout configuring VLAN on port",
+        "ERROR_PVID_TIMEOUT": "Timeout setting PVID",
     }
     
-    # Also check raw SSH errors in output
     ssh_errors = {
-        "No route to host": "Verbindung fehlgeschlagen: Keine Route zum Host",
-        "Connection refused": "Verbindung abgelehnt: SSH-Dienst nicht erreichbar",
-        "Connection timed out": "Verbindungs-Timeout: Host antwortet nicht",
-        "Host is unreachable": "Host nicht erreichbar",
-        "Permission denied": "Authentifizierung fehlgeschlagen: Falscher Benutzername oder Passwort",
+        "No route to host": "Connection failed: No route to host",
+        "Connection refused": "Connection refused: SSH service not reachable",
+        "Connection timed out": "Connection timeout: Host not responding",
+        "Host is unreachable": "Host unreachable",
+        "Permission denied": "Authentication failed: Wrong username or password",
     }
     
     combined = stdout + stderr
@@ -272,14 +495,35 @@ def analyze_output(stdout, stderr):
         return True, None
     
     # Check for timeout markers
-    if "TIMEOUT" in combined:
-        return False, "Timeout während der Konfiguration"
+    if "TIMEOUT" in combined.upper():
+        return False, "Timeout during configuration"
     
-    # If we got here without clear success, be cautious
-    if "Saving user config OK!" in combined or "copy running-config startup-config" in combined:
+    # Fallback success check
+    if "Saving user config OK!" in combined:
         return True, None
     
-    return False, "Unbekannter Fehler - bitte stdout prüfen"
+    return False, "Unknown error - check stdout"
+
+
+def run_expect_script(script_content, timeout=180):
+    """Run an expect script and return the result"""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.exp', delete=False) as f:
+        f.write(script_content)
+        script_path = f.name
+    
+    try:
+        os.chmod(script_path, 0o700)
+        result = subprocess.run(
+            [script_path],
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+        return result.stdout, result.stderr, result.returncode
+    finally:
+        # Cleanup is now in finally block - always executed
+        if os.path.exists(script_path):
+            os.unlink(script_path)
 
 
 def main():
@@ -304,64 +548,58 @@ def main():
     trunk_ports = module.params['trunk_ports']
     access_ports = module.params['access_ports']
     
-    # Validierung
+    # Validate that at least one port type is specified
     if not trunk_ports and not access_ports:
-        module.fail_json(msg="Mindestens trunk_ports oder access_ports muss angegeben werden")
+        module.fail_json(msg="At least one of trunk_ports or access_ports must be specified")
     
-    script = create_batch_port_script(
-        host, username, password, hostname, mode, trunk_ports, access_ports
-    )
+    # Validate port configurations
+    all_ports = validate_port_configs(module, trunk_ports, access_ports)
     
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.exp', delete=False) as f:
-        f.write(script)
-        script_path = f.name
-    
+    # Generate expect script
     try:
-        os.chmod(script_path, 0o700)
-        result = subprocess.run(
-            [script_path], 
-            capture_output=True, 
-            text=True, 
-            timeout=180
+        script = create_batch_port_script(
+            host, username, password, hostname, mode, trunk_ports, access_ports
         )
-        os.unlink(script_path)
-        
-        # Analysiere Output
-        success, error_msg = analyze_output(result.stdout, result.stderr)
-        
-        if not success:
-            module.fail_json(
-                msg=f"Port-Konfiguration fehlgeschlagen: {error_msg}",
-                host=host,
-                stdout=result.stdout,
-                stderr=result.stderr,
-                return_code=result.returncode
-            )
-        
-        # Zähle Operationen
-        trunk_count = len(trunk_ports)
-        access_count = len(access_ports)
-        
-        module.exit_json(
-            changed=True,
-            msg=f"Mode '{mode}': Configured {trunk_count} trunk ports, {access_count} access ports",
-            mode=mode,
-            trunk_ports_configured=trunk_count,
-            access_ports_configured=access_count,
-            stdout=result.stdout
-        )
-        
+    except Exception as e:
+        module.fail_json(msg=f"Error generating script: {str(e)}")
+    
+    # Run script
+    try:
+        stdout, stderr, returncode = run_expect_script(script, timeout=180)
     except subprocess.TimeoutExpired:
-        if os.path.exists(script_path):
-            os.unlink(script_path)
         module.fail_json(
-            msg="Gesamttimeout überschritten (180s) - Switch antwortet nicht oder Netzwerkproblem",
+            msg="Total timeout exceeded (180s) - switch not responding",
             host=host
         )
     except Exception as e:
-        if os.path.exists(script_path):
-            os.unlink(script_path)
-        module.fail_json(msg=f"Unerwarteter Fehler: {str(e)}", host=host)
+        module.fail_json(msg=f"Unexpected error: {str(e)}", host=host)
+    
+    # Analyze output
+    success, error_msg = analyze_output(stdout, stderr)
+    
+    if not success:
+        module.fail_json(
+            msg=f"Port configuration failed: {error_msg}",
+            host=host,
+            stdout=stdout,
+            stderr=stderr,
+            return_code=returncode
+        )
+    
+    # Count operations
+    trunk_count = len(trunk_ports)
+    access_count = len(access_ports)
+    
+    module.exit_json(
+        changed=True,
+        msg=f"Mode '{mode}': Configured {trunk_count} trunk ports, {access_count} access ports",
+        host=host,
+        mode=mode,
+        trunk_ports_configured=trunk_count,
+        access_ports_configured=access_count,
+        ports_configured=all_ports,
+        stdout=stdout
+    )
 
 
 if __name__ == '__main__':
