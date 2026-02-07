@@ -1,0 +1,116 @@
+---
+# =============================================================================
+# Default-Konfiguration: Cisco Catalyst 2900 XL
+# =============================================================================
+# Diese Konfiguration wird bei Take-Ownership mit Option "default" verwendet.
+# Cisco 2900 XL hat 24 FastEthernet Ports.
+# =============================================================================
+
+vlans:
+  - id: 1
+    name: "default"
+  - id: 10
+    name: "Management"
+  - id: 20
+    name: "Clients"
+
+ports:
+  1:
+    description: "Uplink"
+    mode: "trunk"
+    allowed_vlans: [1, 10, 20]
+    native_vlan: 1
+  2:
+    description: "Management"
+    mode: "access"
+    vlan: 10
+  3:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  4:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  5:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  6:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  7:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  8:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  9:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  10:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  11:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  12:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  13:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  14:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  15:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  16:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  17:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  18:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  19:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  20:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  21:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  22:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  23:
+    description: "Reserved"
+    mode: "access"
+    vlan: 1
+  24:
+    description: "Reserved"
+    mode: "access"
+    vlan: 1
+
+lag: {}

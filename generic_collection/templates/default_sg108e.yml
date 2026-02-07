@@ -1,0 +1,50 @@
+---
+# =============================================================================
+# Default-Konfiguration: TP-Link SG108E (Easy Smart)
+# =============================================================================
+# Diese Konfiguration wird bei Take-Ownership mit Option "default" verwendet.
+# Easy Smart hat eingeschränkte Features (kein LAG, keine Port Security).
+# =============================================================================
+
+vlans:
+  - id: 1
+    name: "default"
+  - id: 20
+    name: "Clients"
+
+ports:
+  1:
+    description: "Uplink"
+    mode: "trunk"
+    allowed_vlans: [1, 20]
+  2:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  3:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  4:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  5:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  6:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  7:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+  8:
+    description: "Client"
+    mode: "access"
+    vlan: 20
+
+# Easy Smart unterstützt kein LAG
+lag: {}

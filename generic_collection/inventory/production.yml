@@ -1,0 +1,273 @@
+all:
+  vars:
+    ansible_user: admin
+    ansible_password: neinnein
+    connection_timeout: 20
+    command_timeout: 10
+  hosts:
+    sg3210-office:
+      ansible_host: 10.0.10.1
+      switch_type: tp_link_sg3210
+      switch_model: TL-SG3210
+      switch_location: office
+      switch_role: access
+      connection:
+        protocol: ssh
+        port: 22
+      cli:
+        hostname: OFFICE
+        enable_command: enable
+      ownership:
+        taken: true
+        taken_at: null
+        firmware_version: unknown
+      config: null
+    sg3210-warehouse:
+      ansible_host: 10.0.10.2
+      switch_type: tp_link_sg3210
+      switch_model: TL-SG3210
+      switch_location: Warehouse
+      switch_role: access
+      connection:
+        protocol: ssh
+        port: 22
+      cli:
+        hostname: WAREHOUSE
+        enable_command: enable
+      ownership:
+        taken: true
+        taken_at: '2025-01-15T11:00:00'
+        initial_ip: 192.168.0.1
+        firmware_version: 1.0.0
+      config:
+        vlans:
+        - id: 1
+          name: default
+        - id: 10
+          name: Management
+        - id: 20
+          name: Clients
+        - id: 30
+          name: Guests
+        ports:
+          1:
+            description: Uplink
+            mode: trunk
+            allowed_vlans:
+            - 1
+            - 10
+            - 20
+            - 30
+            native_vlan: 1
+          2:
+            description: Management
+            mode: access
+            vlan: 10
+          3:
+            description: Client
+            mode: access
+            vlan: 20
+          4:
+            description: Client
+            mode: access
+            vlan: 20
+          5:
+            description: Guest
+            mode: access
+            vlan: 30
+          6:
+            description: Guest
+            mode: access
+            vlan: 30
+          7:
+            description: Guest
+            mode: access
+            vlan: 30
+          8:
+            description: Guest
+            mode: access
+            vlan: 30
+          9:
+            description: LAG Member
+            mode: lag
+            lag_group: 1
+          10:
+            description: LAG Member
+            mode: lag
+            lag_group: 1
+        lag:
+          1:
+            name: Uplink-LAG
+            ports:
+            - 9
+            - 10
+            mode: trunk
+            allowed_vlans:
+            - 10
+            - 20
+            - 30
+    sg3210-lab:
+      ansible_host: 10.0.10.3
+      switch_type: tp_link_sg3210
+      switch_model: TL-SG3210
+      switch_location: Lab
+      switch_role: test
+      connection:
+        protocol: ssh
+        port: 22
+      cli:
+        hostname: LAB
+        enable_command: enable
+      ownership:
+        taken: true
+        taken_at: '2025-01-15T11:30:00'
+        initial_ip: 192.168.0.1
+        firmware_version: 1.0.0
+      config:
+        vlans:
+        - id: 1
+          name: default
+        - id: 20
+          name: Clients
+        ports:
+          1:
+            description: Uplink
+            mode: trunk
+            allowed_vlans:
+            - 1
+            - 20
+            native_vlan: 1
+          2:
+            description: Client
+            mode: access
+            vlan: 20
+          3:
+            description: Client
+            mode: access
+            vlan: 20
+          4:
+            description: Client
+            mode: access
+            vlan: 20
+          5:
+            description: Client
+            mode: access
+            vlan: 20
+          6:
+            description: Client
+            mode: access
+            vlan: 20
+          7:
+            description: Client
+            mode: access
+            vlan: 20
+          8:
+            description: Client
+            mode: access
+            vlan: 20
+          9:
+            description: LAG Member
+            mode: lag
+            lag_group: 1
+          10:
+            description: LAG Member
+            mode: lag
+            lag_group: 1
+        lag:
+          1:
+            name: Test-LAG
+            ports:
+            - 9
+            - 10
+            mode: trunk
+            allowed_vlans:
+            - 1
+            - 20
+    sg108e-meeting:
+      ansible_host: 10.0.10.50
+      switch_type: tp_link_sg108e
+      switch_model: TL-SG108E
+      switch_location: Meeting Room
+      switch_role: access
+      connection:
+        protocol: udp
+        port: 29808
+        mac_address: AA:BB:CC:DD:EE:FF
+      ownership:
+        taken: false
+        taken_at: null
+        initial_ip: 192.168.0.1
+      config: null
+    2900xl-lab:
+      ansible_host: 10.0.20.1
+      switch_type: cisco_2900xl
+      switch_model: WS-C2924C-XL-EN
+      switch_location: Lab
+      switch_role: test
+      connection:
+        protocol: telnet
+        port: 23
+        enable_password: neinnein
+      cli:
+        hostname: switch-C2924-lab
+        enable_command: enable
+        config_command: configure terminal
+      ownership:
+        taken: true
+        taken_at: '2025-02-05T00:00:00'
+        initial_ip: 10.0.20.1
+        ios_version: 12.0(5.2)XU
+        ios_image: c2900XL-c3h2s-mz-120.5.2-XU.bin
+        serial_number: FAB0452U37Z
+        mac_address: 00:04:C1:34:C5:80
+      hardware:
+        ram_kb: 8192
+        nvram_kb: 32
+        ports_fastethernet: 24
+        ports_gigabit: 0
+      config: null
+    2900xl-test:
+      ansible_host: 10.0.20.1
+      switch_type: cisco_2900xl
+      switch_model: WS-C2924C-XL-EN
+      switch_location: test
+      switch_role: access
+      connection:
+        protocol: telnet
+        port: 23
+      ownership:
+        taken: true
+        taken_at: null
+        ios_version: 12.0(5.2)XU
+        mac_address: 00:04:C1:34:C5:80
+        serial_number: FAB0452U37Z
+      config: null
+  children:
+    tp_link_sg3210:
+      hosts:
+        sg3210-office: null
+        sg3210-warehouse: null
+        sg3210-lab: null
+    tp_link_sg108e:
+      hosts:
+        sg108e-meeting: null
+    cisco_2900xl:
+      hosts:
+        2900xl-lab: null
+        2900xl-test: null
+    core_switches:
+      hosts:
+        sg3210-office: null
+    access_switches:
+      hosts:
+        sg3210-warehouse: null
+        sg108e-meeting: null
+    test_switches:
+      hosts:
+        sg3210-lab: null
+        2900xl-lab: null
+    distribution_switches:
+      hosts: {}
+    unconfigured:
+      hosts:
+        sg108e-meeting: null

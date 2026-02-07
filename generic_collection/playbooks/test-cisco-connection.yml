@@ -1,0 +1,32 @@
+---
+# =============================================================================
+# Cisco 2900 XL - Schnelltest
+# =============================================================================
+# Testet die Verbindung und liest VLANs aus.
+#
+# Usage:
+#   ansible-playbook test-cisco-connection.yml -e "switch_ip=10.0.20.1 switch_password=neinnein"
+# =============================================================================
+
+- name: Cisco 2900 XL - Verbindungstest
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  
+  vars:
+    ansible_library: "../../cisco/library"
+    switch_ip: "10.0.20.1"
+    switch_password: "neinnein"
+
+  tasks:
+    - name: Take Ownership Test
+      cisco_take_ownership:
+        host: "{{ switch_ip }}"
+        password: "{{ switch_password }}"
+        switch_suffix: "test"
+        switch_location: "Lab"
+      register: result
+    
+    - name: Zeige Ergebnis
+      debug:
+        var: result

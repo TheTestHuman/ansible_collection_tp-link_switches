@@ -1,0 +1,28 @@
+---
+# =============================================================================
+# Typ-spezifische Variablen: TP-Link SG3210
+# =============================================================================
+
+# Verbindungseinstellungen
+default_protocol: "ssh"
+default_port: 22
+connect_timeout: 20
+command_timeout: 10
+
+# Hardware-Limits
+max_ports: 10
+max_vlans: 32
+max_lag_groups: 4
+lag_ports: [9, 10]  # Nur diese Ports können LAG
+
+# CLI-Verhalten
+cli_prompt_pattern: "#"
+cli_enable_command: "enable"
+cli_save_command: "copy running-config startup-config"
+
+# Modul-Pfade (relativ zum Repository-Root)
+module_path: "managed/library"
+expect_scripts_path: "managed/expect_scripts"
+
+# Default-Config Template
+default_config_template: "default_sg3210.yml"

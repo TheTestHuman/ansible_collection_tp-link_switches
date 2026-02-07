@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# Typ-spezifische Variablen: TP-Link SG108E (Easy Smart)
+# =============================================================================
+
+# Verbindungseinstellungen
+default_protocol: "udp"
+default_port: 29808
+connect_timeout: 10
+command_timeout: 5
+
+# Hardware-Limits
+max_ports: 8
+max_vlans: 16
+max_lag_groups: 0  # Easy Smart unterstützt kein LAG
+lag_ports: []
+
+# UDP-spezifisch
+broadcast_address: "255.255.255.255"
+requires_mac_address: true
+
+# Modul-Pfade (relativ zum Repository-Root)
+module_path: "easy_smart/library"
+
+# Default-Config Template
+default_config_template: "default_sg108e.yml"
+
+# Feature-Support (was kann dieser Switch-Typ?)
+features:
+  vlan: true
+  lag: false
+  port_security: false
+  qos: false
+  spanning_tree: false

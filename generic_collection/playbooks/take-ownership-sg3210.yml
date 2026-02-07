@@ -1,0 +1,345 @@
+---
+# =============================================================================
+# TP-Link SG3210 - Take Ownership (2-Stage Process)
+# =============================================================================
+# Registriert einen Factory-Reset TP-Link SG3210 Switch und fügt ihn zum 
+# Inventory hinzu.
+#
+# Ablauf:
+#   Stage 1: Passwort setzen + SSH aktivieren (via Telnet)
+#   Stage 2: IP-Adresse ändern (via SSH)
+#   Stage 3: Optional VLANs konfigurieren
+#   Stage 4: Inventory aktualisieren
+#
+# Voraussetzungen:
+#   - Workstation muss im gleichen Netzwerk wie Factory-Default Switch sein (192.168.0.x)
+#   - Switch ist Factory-Reset (IP: 192.168.0.1, User: admin, Pass: admin)
+#   - expect Paket muss installiert sein
+#
+# Usage:
+#   cd ~/ansible_collection_tp-link_switches/generic_collection/
+#   ansible-playbook playbooks/take-ownership-sg3210.yml
+#
+# Nach Abschluss:
+#   - Workstation-IP auf Ziel-Netzwerk ändern
+#   - Switch ist unter neuer IP per SSH erreichbar
+# =============================================================================
+
+- name: TP-Link SG3210 - Take Ownership
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  
+  vars_prompt:
+    - name: switch_ip
+      prompt: "Neue Switch IP-Adresse (z.B. 10.0.10.1)"
+      private: false
+    
+    - name: switch_netmask
+      prompt: "Subnetzmaske"
+      default: "255.255.255.0"
+      private: false
+    
+    - name: switch_gateway
+      prompt: "Gateway IP-Adresse"
+      private: false
+    
+    - name: switch_suffix
+      prompt: "Switch-Suffix für Inventory-Name (z.B. office, warehouse, lab)"
+      private: false
+    
+    - name: switch_location
+      prompt: "Standort (z.B. Server Room, Office)"
+      private: false
+      default: "Unknown"
+    
+    - name: switch_password
+      prompt: "Neues Admin-Passwort für den Switch"
+      private: true
+    
+    - name: config_mode
+      prompt: "Config-Modus? (default = Standard-VLANs anlegen / skip = nur registrieren)"
+      default: "skip"
+      private: false
+    
+    - name: update_inventory
+      prompt: "Switch ins Inventory eintragen? (yes/no)"
+      default: "yes"
+      private: false
+
+  vars:
+    # Factory Default Settings
+    factory_default_ip: "192.168.0.1"
+    factory_default_user: "admin"
+    factory_default_password: "admin"
+    
+    # Derived settings
+    switch_name: "sg3210-{{ switch_suffix }}"
+    # WICHTIG: Der CLI-Hostname ist bei Factory-Reset immer "SG3210"
+    # Er kann erst nach dem Setup geändert werden
+    cli_hostname: "SG3210"
+    inventory_file: "{{ playbook_dir }}/../inventory/production.yml"
+    
+    # Timing
+    ssh_startup_delay: 5
+    ssh_port_timeout: 30
+
+  tasks:
+    # =========================================================================
+    # PRE-FLIGHT CHECKS
+    # =========================================================================
+    
+    - name: "PRE-CHECK: Zeige Konfiguration"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          TAKE OWNERSHIP - TP-Link SG3210
+          ═══════════════════════════════════════════════════════════
+          
+          Inventory-Name:  {{ switch_name }}
+          Neue IP:         {{ switch_ip }}
+          Subnetz:         {{ switch_netmask }}
+          Gateway:         {{ switch_gateway }}
+          Standort:        {{ switch_location }}
+          Hostname:        {{ cli_hostname }}
+          
+          Factory-IP:      {{ factory_default_ip }}
+          
+          ═══════════════════════════════════════════════════════════
+    
+    - name: "PRE-CHECK: Prüfe ob Factory-IP erreichbar ist (Telnet)"
+      wait_for:
+        host: "{{ factory_default_ip }}"
+        port: 23
+        timeout: 10
+      register: telnet_check
+      ignore_errors: yes
+    
+    - name: "PRE-CHECK: Fehler wenn Switch nicht erreichbar"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Switch nicht erreichbar!
+          ═══════════════════════════════════════════════════════════
+          
+          Switch ist unter {{ factory_default_ip }}:23 (Telnet) nicht erreichbar.
+          
+          Bitte prüfen:
+          1. Switch ist eingeschaltet und verbunden
+          2. Workstation-IP ist im Bereich 192.168.0.x
+          3. Switch ist Factory-Reset (Default-IP: 192.168.0.1)
+          
+          ═══════════════════════════════════════════════════════════
+      when: telnet_check is failed
+
+    # =========================================================================
+    # STAGE 1: Initial Setup via Telnet
+    # =========================================================================
+    
+    - name: "STAGE 1: Passwort setzen und SSH aktivieren (via Telnet)"
+      tp_link_initial_setup:
+        default_ip: "{{ factory_default_ip }}"
+        default_user: "{{ factory_default_user }}"
+        default_password: "{{ factory_default_password }}"
+        new_password: "{{ switch_password }}"
+        enable_ssh: true
+        hostname: "{{ cli_hostname }}"
+      register: stage1_result
+    
+    - name: "STAGE 1: Ergebnis"
+      debug:
+        msg: "✓ Stage 1 abgeschlossen: {{ stage1_result.msg }}"
+
+    # =========================================================================
+    # INTER-STAGE: Wait for SSH
+    # =========================================================================
+    
+    - name: "WAIT: SSH-Service starten lassen"
+      pause:
+        seconds: "{{ ssh_startup_delay }}"
+    
+    - name: "WAIT: Prüfe ob SSH-Port offen ist"
+      wait_for:
+        host: "{{ factory_default_ip }}"
+        port: 22
+        timeout: "{{ ssh_port_timeout }}"
+      register: ssh_port_test
+      ignore_errors: yes
+    
+    - name: "WAIT: Fehler wenn SSH nicht verfügbar"
+      fail:
+        msg: |
+          SSH-Port 22 ist nicht offen auf {{ factory_default_ip }}.
+          Stage 1 hat möglicherweise SSH nicht aktiviert.
+          Bitte Switch manuell per Telnet prüfen.
+      when: ssh_port_test is failed
+
+    # =========================================================================
+    # STAGE 2: Change IP Address via SSH
+    # =========================================================================
+    
+    - name: "STAGE 2: IP-Adresse ändern (via SSH)"
+      tp_link_change_ip:
+        current_ip: "{{ factory_default_ip }}"
+        username: "{{ factory_default_user }}"
+        password: "{{ switch_password }}"
+        new_ip: "{{ switch_ip }}"
+        new_netmask: "{{ switch_netmask }}"
+        new_gateway: "{{ switch_gateway }}"
+        hostname: "{{ cli_hostname }}"
+      register: stage2_result
+    
+    - name: "STAGE 2: Ergebnis"
+      debug:
+        msg: "✓ Stage 2 abgeschlossen: {{ stage2_result.msg }}"
+    
+    - name: "STAGE 2: Zeige neue Konfiguration"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ SWITCH ERFOLGREICH KONFIGURIERT
+          ═══════════════════════════════════════════════════════════
+          
+          Inventory-Name:  {{ switch_name }}
+          IP-Adresse:      {{ switch_ip }}
+          Subnetz:         {{ switch_netmask }}
+          Gateway:         {{ switch_gateway }}
+          Standort:        {{ switch_location }}
+          
+          SSH:             Aktiviert
+          Benutzername:    {{ factory_default_user }}
+          
+          ═══════════════════════════════════════════════════════════
+          
+          HINWEIS: Verbindung wurde getrennt (erwartet nach IP-Änderung)
+          
+          Um VLANs zu konfigurieren oder den Switch zu erreichen:
+          1. Workstation-IP auf {{ switch_ip | regex_replace('\.[0-9]+$', '.x') }} ändern
+          2. SSH: ssh {{ factory_default_user }}@{{ switch_ip }}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # STAGE 3: VLANs konfigurieren (optional)
+    # =========================================================================
+    
+    - name: "STAGE 3: Hinweis zu VLANs"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          VLAN-KONFIGURATION
+          ═══════════════════════════════════════════════════════════
+          
+          Config-Modus: {{ config_mode }}
+          
+          {% if config_mode == 'default' %}
+          ACHTUNG: VLANs können erst konfiguriert werden, wenn die
+          Workstation im neuen Netzwerk ({{ switch_ip | regex_replace('\.[0-9]+$', '.x') }}) ist!
+          
+          Bitte führe nach dem Netzwerkwechsel folgendes aus:
+          
+            ansible-playbook playbooks/configure-vlans-sg3210.yml \
+              -e "target_switch={{ switch_name }}"
+          
+          {% else %}
+          VLANs werden nicht konfiguriert (config_mode=skip).
+          {% endif %}
+          ═══════════════════════════════════════════════════════════
+      when: config_mode == "default"
+
+    # =========================================================================
+    # STAGE 4: Inventory aktualisieren
+    # =========================================================================
+    
+    - name: "STAGE 4: Prüfe ob Switch bereits im Inventory existiert"
+      inventory_manager:
+        inventory_path: "{{ inventory_file }}"
+        switch_name: "{{ switch_name }}"
+        action: check
+      register: inventory_check
+      when: update_inventory | lower == "yes"
+    
+    - name: "STAGE 4: Warnung - Switch existiert bereits"
+      pause:
+        prompt: |
+          
+          ⚠️  WARNUNG: Switch '{{ switch_name }}' existiert bereits im Inventory!
+          
+          Möchtest du den Eintrag überschreiben? (yes/no)
+      register: overwrite_prompt
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_check.switch_exists | default(false)
+    
+    - name: "STAGE 4: Setze force-Flag"
+      set_fact:
+        force_update: "{{ overwrite_prompt.user_input | default('no') | lower == 'yes' }}"
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_check.switch_exists | default(false)
+    
+    - name: "STAGE 4: Füge Switch zum Inventory hinzu"
+      inventory_manager:
+        inventory_path: "{{ inventory_file }}"
+        switch_name: "{{ switch_name }}"
+        ansible_host: "{{ switch_ip }}"
+        switch_type: "tp_link_sg3210"
+        switch_model: "TL-SG3210"
+        switch_location: "{{ switch_location }}"
+        switch_role: "access"
+        connection:
+          protocol: "ssh"
+          port: 22
+        cli:
+          hostname: "{{ switch_suffix | upper }}"
+          enable_command: "enable"
+        hardware_info:
+          firmware_version: "unknown"
+        force: "{{ force_update | default(false) }}"
+        action: add
+      register: inventory_result
+      when: 
+        - update_inventory | lower == "yes"
+        - (not inventory_check.switch_exists | default(false)) or (force_update | default(false))
+    
+    - name: "STAGE 4: Zeige Inventory-Ergebnis"
+      debug:
+        msg: "✓ {{ inventory_result.message }}"
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_result is defined
+        - inventory_result.changed | default(false)
+
+    # =========================================================================
+    # ZUSAMMENFASSUNG
+    # =========================================================================
+    
+    - name: "COMPLETE: Abschluss-Zusammenfassung"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ TAKE OWNERSHIP ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ switch_name }}
+          Typ:        TP-Link SG3210
+          IP:         {{ switch_ip }}
+          Gateway:    {{ switch_gateway }}
+          Standort:   {{ switch_location }}
+          SSH:        Aktiviert
+          
+          Inventory:  {{ 'Aktualisiert' if (inventory_result.changed | default(false)) else ('Nicht aktualisiert' if update_inventory | lower == 'yes' else 'Übersprungen') }}
+          
+          ═══════════════════════════════════════════════════════════
+          NÄCHSTE SCHRITTE
+          ═══════════════════════════════════════════════════════════
+          
+          1. Workstation-IP auf {{ switch_ip | regex_replace('\.[0-9]+$', '.x') }} Bereich ändern
+          2. Verbindung testen: ssh admin@{{ switch_ip }}
+          {% if config_mode == 'default' %}
+          3. VLANs konfigurieren:
+             ansible-playbook playbooks/configure-vlans-sg3210.yml \
+               -e "target_switch={{ switch_name }}"
+          {% endif %}
+          
+          ═══════════════════════════════════════════════════════════

@@ -1,0 +1,45 @@
+---
+# =============================================================================
+# Typ-spezifische Variablen: Cisco Catalyst 2900 XL
+# =============================================================================
+
+# Verbindungseinstellungen
+default_protocol: "telnet"          # Kein SSH auf altem IOS 12.0
+default_port: 23
+connect_timeout: 30
+command_timeout: 15
+
+# Hardware-Limits
+max_ports: 24
+max_vlans: 64
+max_lag_groups: 0                   # EtherChannel nicht auf allen 2900XL
+
+# CLI-Verhalten (IOS-spezifisch)
+cli_prompt_pattern: "[#>]"
+cli_enable_command: "enable"
+cli_config_command: "configure terminal"
+cli_exit_config_command: "end"
+cli_save_command: "write memory"
+
+# IOS-spezifische Befehle
+ios_commands:
+  show_version: "show version"
+  show_vlans: "show vlan"
+  show_interfaces: "show interfaces status"
+  show_running: "show running-config"
+  show_mac_table: "show mac-address-table"
+
+# Modul-Pfade (relativ zum Repository-Root)
+module_path: "cisco/library"
+
+# Default-Config Template
+default_config_template: "default_2900xl.yml"
+
+# Feature-Support (IOS 12.0 ist limitiert)
+features:
+  vlan: true
+  lag: false                        # EtherChannel nicht sicher verfügbar
+  port_security: true
+  qos: false
+  spanning_tree: true
+  ssh: false                        # Nur Telnet!

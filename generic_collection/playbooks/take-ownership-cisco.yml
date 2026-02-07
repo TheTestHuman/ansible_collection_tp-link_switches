@@ -1,0 +1,178 @@
+---
+# =============================================================================
+# Cisco 2900 XL - Take Ownership
+# =============================================================================
+# Registriert einen Cisco Switch und fügt ihn zum Inventory hinzu.
+# 
+# WICHTIG: Der Switch muss vorher per Konsole konfiguriert werden!
+# (IP-Adresse, Passwort, Telnet aktiviert)
+#
+# Usage:
+#   cd ~/ansible_collection_tp-link_switches/generic_collection/
+#   ansible-playbook playbooks/take-ownership-cisco.yml
+# =============================================================================
+
+- name: Cisco 2900 XL - Take Ownership
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  
+  vars_prompt:
+    - name: switch_ip
+      prompt: "Switch IP-Adresse"
+      private: false
+    
+    - name: switch_suffix
+      prompt: "Switch-Suffix für Inventory-Name (z.B. lab, office, rack1)"
+      private: false
+    
+    - name: switch_location
+      prompt: "Standort (z.B. Server Room, Lab)"
+      private: false
+      default: "Unknown"
+    
+    - name: switch_password
+      prompt: "Switch Passwort (VTY + Enable)"
+      private: true
+    
+    - name: config_mode
+      prompt: "Config-Modus? (default = Standard-VLANs anlegen / skip = nur registrieren)"
+      default: "skip"
+      private: false
+    
+    - name: update_inventory
+      prompt: "Switch ins Inventory eintragen? (yes/no)"
+      default: "yes"
+      private: false
+
+  vars:
+    inventory_file: "{{ playbook_dir }}/../inventory/production.yml"
+    switch_name: "2900xl-{{ switch_suffix }}"
+
+  tasks:
+    # =========================================================================
+    # SCHRITT 1: Take Ownership - Hardware-Info auslesen
+    # =========================================================================
+    - name: Take Ownership - Cisco 2900 XL
+      cisco_take_ownership:
+        host: "{{ switch_ip }}"
+        password: "{{ switch_password }}"
+        switch_suffix: "{{ switch_suffix }}"
+        switch_location: "{{ switch_location }}"
+      register: ownership_result
+    
+    - name: Zeige Hardware-Informationen
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ SWITCH ERFOLGREICH REGISTRIERT
+          ═══════════════════════════════════════════════════════════
+          
+          Inventory-Name:  {{ switch_name }}
+          IP-Adresse:      {{ switch_ip }}
+          Standort:        {{ switch_location }}
+          
+          Hardware:
+            Modell:        {{ ownership_result.hardware_info.model | default('N/A') }}
+            IOS Version:   {{ ownership_result.hardware_info.ios_version | default('N/A') }}
+            Serial:        {{ ownership_result.hardware_info.serial_number | default('N/A') }}
+            MAC:           {{ ownership_result.hardware_info.mac_address | default('N/A') }}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 2: VLANs konfigurieren (optional)
+    # =========================================================================
+    - name: Lade Default-Konfiguration
+      include_vars:
+        file: "../templates/default_2900xl.yml"
+        name: default_config
+      when: config_mode == "default"
+    
+    - name: Konfiguriere VLANs (Default-Modus)
+      cisco_vlan:
+        host: "{{ switch_ip }}"
+        password: "{{ switch_password }}"
+        vlans: "{{ default_config.vlans }}"
+        state: present
+      when: config_mode == "default"
+      register: vlan_result
+    
+    - name: Zeige VLAN-Ergebnis
+      debug:
+        msg: "VLANs erstellt: {{ vlan_result.vlans_created | default([]) }}"
+      when: config_mode == "default"
+
+    # =========================================================================
+    # SCHRITT 3: Inventory aktualisieren
+    # =========================================================================
+    - name: Prüfe ob Switch bereits im Inventory existiert
+      inventory_manager:
+        inventory_path: "{{ inventory_file }}"
+        switch_name: "{{ switch_name }}"
+        action: check
+      register: inventory_check
+      when: update_inventory | lower == "yes"
+    
+    - name: Warnung - Switch existiert bereits
+      pause:
+        prompt: |
+          
+          ⚠️  WARNUNG: Switch '{{ switch_name }}' existiert bereits im Inventory!
+          
+          Möchtest du den Eintrag überschreiben? (yes/no)
+      register: overwrite_prompt
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_check.switch_exists | default(false)
+    
+    - name: Setze force-Flag
+      set_fact:
+        force_update: "{{ overwrite_prompt.user_input | default('no') | lower == 'yes' }}"
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_check.switch_exists | default(false)
+    
+    - name: Füge Switch zum Inventory hinzu
+      inventory_manager:
+        inventory_path: "{{ inventory_file }}"
+        switch_name: "{{ switch_name }}"
+        ansible_host: "{{ switch_ip }}"
+        switch_type: "cisco_2900xl"
+        switch_model: "{{ ownership_result.hardware_info.model | default('WS-C2924C-XL') }}"
+        switch_location: "{{ switch_location }}"
+        switch_role: "access"
+        hardware_info: "{{ ownership_result.hardware_info }}"
+        config: "{{ default_config | default(omit) }}"
+        force: "{{ force_update | default(false) }}"
+        action: add
+      register: inventory_result
+      when: 
+        - update_inventory | lower == "yes"
+        - (not inventory_check.switch_exists | default(false)) or (force_update | default(false))
+    
+    - name: Zeige Inventory-Ergebnis
+      debug:
+        msg: "{{ inventory_result.message }}"
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_result is defined
+
+    # =========================================================================
+    # SCHRITT 4: Zusammenfassung
+    # =========================================================================
+    - name: Abschluss-Zusammenfassung
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ TAKE OWNERSHIP ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ switch_name }}
+          IP:         {{ switch_ip }}
+          Standort:   {{ switch_location }}
+          
+          VLANs:      {{ 'Konfiguriert' if config_mode == 'default' else 'Übersprungen' }}
+          Inventory:  {{ 'Aktualisiert' if (inventory_result.changed | default(false)) else ('Nicht aktualisiert' if update_inventory | lower == 'yes' else 'Übersprungen') }}
+          
+          ═══════════════════════════════════════════════════════════
