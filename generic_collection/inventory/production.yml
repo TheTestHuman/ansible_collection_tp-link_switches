@@ -21,7 +21,16 @@ all:
         taken: true
         taken_at: null
         firmware_version: unknown
-      config: null
+      config:
+        vlans:
+        - id: 10
+          name: Management
+        - id: 31
+          name: egal
+        - id: 41
+          name: Blödsinn
+        ports: {}
+        lag: {}
     sg3210-warehouse:
       ansible_host: 10.0.10.2
       switch_type: tp_link_sg3210
@@ -242,6 +251,43 @@ all:
         mac_address: 00:04:C1:34:C5:80
         serial_number: FAB0452U37Z
       config: null
+    sg108e-lag:
+      ansible_host: 10.0.10.2
+      switch_type: tp_link_sg108e
+      switch_model: TL-SG108E
+      switch_location: lag
+      switch_role: access
+      connection:
+        protocol: udp
+        port: 29808
+        mac_address: 8C:86:DD:AD:91:82
+      ownership:
+        taken: true
+        taken_at: null
+        mac_address: 8C:86:DD:AD:91:82
+      config:
+        vlans:
+        - vlan_id: 1
+          name: Default
+          untagged_ports:
+          - 1
+        - vlan_id: 10
+          name: Management
+          tagged_ports:
+          - 1
+          untagged_ports:
+          - 2
+        - vlan_id: 21
+          name: Clients
+          tagged_ports:
+          - 1
+          untagged_ports:
+          - 3
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
   children:
     tp_link_sg3210:
       hosts:
@@ -251,6 +297,7 @@ all:
     tp_link_sg108e:
       hosts:
         sg108e-meeting: null
+        sg108e-lag: null
     cisco_2900xl:
       hosts:
         2900xl-lab: null

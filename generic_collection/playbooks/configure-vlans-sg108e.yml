@@ -1,0 +1,264 @@
+---
+# =============================================================================
+# Configure VLANs on TP-Link SG108E Easy Smart Switch
+# =============================================================================
+#
+# Dieses Playbook konfiguriert VLANs auf TP-Link SG108E Switches.
+#
+# Quellen für VLANs:
+#   - inventory: VLANs aus dem Inventory-Eintrag des Switches (config.vlans)
+#   - default:   VLANs aus dem Default-Template (templates/default_sg108e.yml)
+#   - manual:    VLANs werden im Playbook definiert
+#
+# Modi:
+#   - add:     Nur neue VLANs hinzufügen
+#   - replace: Alle nicht-geschützten VLANs ersetzen
+#
+# Usage:
+#   cd ~/ansible_collection_tp-link_switches/generic_collection/
+#   ansible-playbook playbooks/configure-vlans-sg108e.yml
+#
+# =============================================================================
+
+- name: Configure VLANs on TP-Link SG108E
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  
+  vars_prompt:
+    - name: target_switch
+      prompt: "Switch-Name aus Inventory (z.B. sg108e-meeting)"
+      private: false
+    
+    - name: vlan_source
+      prompt: "VLAN-Quelle? (inventory = aus Inventory / default = Standard-Template / manual = manuell definiert)"
+      default: "default"
+      private: false
+    
+    - name: vlan_mode
+      prompt: "Modus? (add = nur hinzufügen / replace = ersetzen)"
+      default: "add"
+      private: false
+    
+    - name: update_inventory
+      prompt: "Inventory nach Konfiguration aktualisieren? (yes/no)"
+      default: "yes"
+      private: false
+
+  vars:
+    inventory_file: "{{ playbook_dir }}/../inventory/production.yml"
+    vault_file: "{{ playbook_dir }}/../inventory/vault.yml"
+    protected_vlans: [1]
+    
+    # Manuelle VLAN-Definition (nur wenn vlan_source=manual)
+    # SG108E hat 8 Ports - Port 1 ist typischerweise Trunk/Uplink
+    manual_vlans:
+      - vlan_id: 1
+        name: "Default"
+        untagged_ports: [1]
+      - vlan_id: 10
+        name: "Management"
+        tagged_ports: [1]
+        untagged_ports: [2]
+      - vlan_id: 21
+        name: "Clients"
+        tagged_ports: [1]
+        untagged_ports: [3, 4, 5, 6, 7, 8]
+
+  tasks:
+    # =========================================================================
+    # SCHRITT 1: Switch-Daten aus Inventory laden
+    # =========================================================================
+    
+    - name: "INIT: Lade Inventory"
+      include_vars:
+        file: "{{ inventory_file }}"
+        name: full_inventory
+    
+    - name: "INIT: Lade Vault"
+      include_vars:
+        file: "{{ vault_file }}"
+        name: vault_data
+      ignore_errors: yes
+    
+    - name: "INIT: Prüfe ob Switch existiert"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Switch '{{ target_switch }}' nicht im Inventory!
+          ═══════════════════════════════════════════════════════════
+          
+          Verfügbare SG108E Switches:
+          {% for host, data in full_inventory.all.hosts.items() %}
+          {% if data.switch_type | default('') == 'tp_link_sg108e' %}
+            - {{ host }} ({{ data.ansible_host }})
+          {% endif %}
+          {% endfor %}
+          
+          ═══════════════════════════════════════════════════════════
+      when: target_switch not in full_inventory.all.hosts
+    
+    - name: "INIT: Extrahiere Switch-Daten"
+      set_fact:
+        switch_data: "{{ full_inventory.all.hosts[target_switch] }}"
+        switch_ip: "{{ full_inventory.all.hosts[target_switch].ansible_host }}"
+        switch_mac: "{{ full_inventory.all.hosts[target_switch].connection.mac_address }}"
+        switch_user: "{{ full_inventory.all.vars.ansible_user | default('admin') }}"
+        switch_password: "{{ vault_data.vault_passwords[target_switch] | default(vault_data.vault_default_password) | default('neinnein') }}"
+    
+    - name: "INIT: Zeige Switch-Info"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          VLAN-KONFIGURATION - {{ target_switch }}
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }}
+          IP:         {{ switch_ip }}
+          MAC:        {{ switch_mac }}
+          
+          Quelle:     {{ vlan_source }}
+          Modus:      {{ vlan_mode }}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 2: VLANs aus gewählter Quelle laden
+    # =========================================================================
+    
+    - name: "VLANS: Lade aus Inventory"
+      set_fact:
+        target_vlans: "{{ switch_data.config.vlans | default([]) }}"
+      when: vlan_source == "inventory"
+    
+    - name: "VLANS: Lade Default-Template"
+      block:
+        - name: Lade Template-Datei
+          include_vars:
+            file: "../templates/default_sg108e.yml"
+            name: default_config
+        - name: Setze VLANs aus Template
+          set_fact:
+            target_vlans: "{{ default_config.vlans | default([]) }}"
+      when: vlan_source == "default"
+    
+    - name: "VLANS: Nutze manuelle Definition"
+      set_fact:
+        target_vlans: "{{ manual_vlans }}"
+      when: vlan_source == "manual"
+    
+    - name: "VLANS: Prüfe ob VLANs vorhanden"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Keine VLANs gefunden!
+          ═══════════════════════════════════════════════════════════
+          
+          Quelle '{{ vlan_source }}' enthält keine VLAN-Definition.
+          
+          {% if vlan_source == 'inventory' %}
+          Der Switch '{{ target_switch }}' hat keine config.vlans im Inventory.
+          Bitte zuerst VLANs im Inventory definieren oder 'default' als Quelle wählen.
+          {% endif %}
+          
+          ═══════════════════════════════════════════════════════════
+      when: target_vlans | length == 0
+    
+    - name: "VLANS: Zeige zu konfigurierende VLANs"
+      debug:
+        msg: |
+          Zu konfigurierende VLANs ({{ target_vlans | length }}):
+          {% for vlan in target_vlans %}
+            VLAN {{ vlan.vlan_id }}: {{ vlan.name }}
+              Tagged:   {{ vlan.tagged_ports | default([]) | join(', ') or 'keine' }}
+              Untagged: {{ vlan.untagged_ports | default([]) | join(', ') or 'keine' }}
+          {% endfor %}
+
+    # =========================================================================
+    # SCHRITT 3: VLANs konfigurieren
+    # =========================================================================
+    
+    - name: "CONFIG: VLANs konfigurieren (Mode: {{ vlan_mode }})"
+      sg108e_vlan:
+        switch_ip: "{{ switch_ip }}"
+        switch_mac: "{{ switch_mac }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_password }}"
+        vlans: "{{ target_vlans }}"
+        mode: "{{ vlan_mode }}"
+        protected_vlans: "{{ protected_vlans }}"
+      register: vlan_result
+    
+    - name: "CONFIG: Zeige Ergebnis"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ VLAN-KONFIGURATION ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:          {{ target_switch }}
+          Modus:           {{ vlan_mode }}
+          VLANs erstellt:  {{ vlan_result.vlans_created }}
+          VLANs aktualisiert: {{ vlan_result.vlans_updated | default(0) }}
+          VLANs gelöscht:  {{ vlan_result.vlans_deleted | default(0) }}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 4: Inventory aktualisieren
+    # =========================================================================
+    
+    - name: "INVENTORY: Aktualisiere config.vlans"
+      inventory_manager:
+        inventory_path: "{{ inventory_file }}"
+        switch_name: "{{ target_switch }}"
+        switch_data:
+          ansible_host: "{{ switch_ip }}"
+          switch_type: "{{ switch_data.switch_type }}"
+          switch_model: "{{ switch_data.switch_model | default('TL-SG108E') }}"
+          switch_location: "{{ switch_data.switch_location | default('Unknown') }}"
+          switch_role: "{{ switch_data.switch_role | default('access') }}"
+          connection: "{{ switch_data.connection }}"
+          ownership: "{{ switch_data.ownership | default({}) }}"
+          config:
+            vlans: "{{ target_vlans }}"
+        action: update
+        force: true
+      register: inventory_result
+      when: update_inventory | lower == "yes"
+    
+    - name: "INVENTORY: Zeige Ergebnis"
+      debug:
+        msg: "✓ Inventory aktualisiert: {{ inventory_result.message }}"
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_result is defined
+
+    # =========================================================================
+    # ZUSAMMENFASSUNG
+    # =========================================================================
+    
+    - name: "COMPLETE: Zusammenfassung"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ VLAN-KONFIGURATION ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }} ({{ switch_ip }})
+          Quelle:     {{ vlan_source }}
+          Modus:      {{ vlan_mode }}
+          
+          Konfigurierte VLANs:
+          {% for vlan in target_vlans %}
+            VLAN {{ vlan.vlan_id }}: {{ vlan.name }}
+          {% endfor %}
+          
+          Inventory:  {{ 'Aktualisiert' if (update_inventory | lower == 'yes') else 'Nicht aktualisiert' }}
+          
+          ═══════════════════════════════════════════════════════════
+          
+          Verifizieren über Web-Interface:
+            http://{{ switch_ip }}
+          
+          ═══════════════════════════════════════════════════════════

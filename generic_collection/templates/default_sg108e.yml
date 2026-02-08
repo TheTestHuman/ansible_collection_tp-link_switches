@@ -4,47 +4,39 @@
 # =============================================================================
 # Diese Konfiguration wird bei Take-Ownership mit Option "default" verwendet.
 # Easy Smart hat eingeschränkte Features (kein LAG, keine Port Security).
+#
+# Port-Layout (8 Ports):
+#   Port 1: Uplink/Trunk (tagged für alle VLANs)
+#   Port 2: Management (untagged VLAN 1)
+#   Port 3-8: Clients (untagged VLAN 20)
+#
+# WICHTIG: Das SG108E-Modul erwartet:
+#   - vlan_id (nicht id)
+#   - tagged_ports: Liste von Portnummern
+#   - untagged_ports: Liste von Portnummern
 # =============================================================================
 
 vlans:
-  - id: 1
-    name: "default"
-  - id: 20
+  - vlan_id: 1
+    name: "Default"
+    untagged_ports: [1, 2]
+    tagged_ports: []
+  
+  - vlan_id: 20
     name: "Clients"
+    tagged_ports: [1]
+    untagged_ports: [3, 4, 5, 6, 7, 8]
 
-ports:
-  1:
-    description: "Uplink"
-    mode: "trunk"
-    allowed_vlans: [1, 20]
-  2:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  3:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  4:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  5:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  6:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  7:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  8:
-    description: "Client"
-    mode: "access"
-    vlan: 20
+# Port-Beschreibungen (für Dokumentation, nicht vom Modul verwendet)
+port_descriptions:
+  1: "Uplink/Trunk"
+  2: "Management"
+  3: "Client"
+  4: "Client"
+  5: "Client"
+  6: "Client"
+  7: "Client"
+  8: "Client"
 
 # Easy Smart unterstützt kein LAG
 lag: {}

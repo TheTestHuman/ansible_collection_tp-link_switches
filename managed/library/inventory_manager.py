@@ -3,6 +3,7 @@
 Inventory Manager Module
 - Fügt neue Switches zum Inventory hinzu
 - Aktualisiert bestehende Einträge
+- Verwaltet Passwörter in vault.yml
 - Unterstützt alle Switch-Typen (Cisco, TP-Link SG3210, TP-Link SG108E)
 
 Getestet mit:
@@ -20,10 +21,11 @@ from ansible.module_utils.basic import AnsibleModule
 DOCUMENTATION = '''
 ---
 module: inventory_manager
-short_description: Manage switch entries in Ansible inventory
+short_description: Manage switch entries in Ansible inventory and vault
 description:
     - Add new switches to inventory
     - Update existing switch entries
+    - Manage passwords in vault.yml
     - Support for multiple switch types
 options:
     inventory_path:
@@ -34,7 +36,7 @@ options:
         required: true
     switch_data:
         description: Dictionary with switch configuration data
-        required: true
+        required: false
         type: dict
     action:
         description: Action to perform
@@ -44,24 +46,121 @@ options:
         description: Overwrite existing entry without asking
         type: bool
         default: false
+    vault_path:
+        description: Path to vault.yml for password storage
+        required: false
+    switch_password:
+        description: Password to store in vault (only used with vault_path)
+        required: false
+        no_log: true
 '''
 
 EXAMPLES = '''
-- name: Add Cisco switch to inventory
+- name: Add Cisco switch to inventory with vault password
   inventory_manager:
     inventory_path: "../inventory/production.yml"
+    vault_path: "../inventory/vault.yml"
     switch_name: "2900xl-lab"
+    switch_password: "secret123"
     switch_data:
       ansible_host: "10.0.20.1"
       switch_type: "cisco_2900xl"
-      switch_model: "WS-C2924C-XL-EN"
-      switch_location: "Lab"
-      ownership:
-        taken: true
-        taken_at: "2026-02-06T12:00:00Z"
-        ios_version: "12.0(5.2)XU"
     action: add
 '''
+
+
+class VaultManager:
+    """Verwaltet die vault.yml Datei"""
+    
+    def __init__(self, vault_path):
+        self.vault_path = os.path.abspath(vault_path)
+        self.vault = None
+        self._load()
+    
+    def _load(self):
+        """Vault-Datei laden"""
+        if not os.path.exists(self.vault_path):
+            # Erstelle neue Vault-Struktur
+            self.vault = {
+                'vault_default_username': 'admin',
+                'vault_default_password': 'neinnein',
+                'vault_passwords': {}
+            }
+            return
+        
+        with open(self.vault_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        # Prüfe ob Datei verschlüsselt ist
+        if content.startswith('$ANSIBLE_VAULT'):
+            raise ValueError("vault.yml is encrypted. Please decrypt first or use --ask-vault-pass")
+        
+        self.vault = yaml.safe_load(content) or {}
+        
+        # Sicherstellen dass die Grundstruktur existiert
+        if 'vault_passwords' not in self.vault:
+            self.vault['vault_passwords'] = {}
+        if 'vault_default_password' not in self.vault:
+            self.vault['vault_default_password'] = 'neinnein'
+        if 'vault_default_username' not in self.vault:
+            self.vault['vault_default_username'] = 'admin'
+    
+    def _save(self):
+        """Vault-Datei speichern"""
+        # Backup erstellen
+        backup_path = self.vault_path + '.bak'
+        if os.path.exists(self.vault_path):
+            with open(self.vault_path, 'r') as f:
+                backup_content = f.read()
+            # Nur Backup wenn nicht verschlüsselt
+            if not backup_content.startswith('$ANSIBLE_VAULT'):
+                with open(backup_path, 'w') as f:
+                    f.write(backup_content)
+        
+        # Header-Kommentare
+        header = '''---
+# =============================================================================
+# Ansible Vault - Credentials
+# =============================================================================
+# Diese Datei sollte verschlüsselt werden:
+#   ansible-vault encrypt vault.yml
+# =============================================================================
+
+'''
+        
+        # YAML ohne Header erstellen
+        yaml_content = yaml.dump(
+            self.vault,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+            indent=2
+        )
+        
+        with open(self.vault_path, 'w', encoding='utf-8') as f:
+            f.write(header + yaml_content)
+    
+    def set_password(self, switch_name, password):
+        """Passwort für einen Switch setzen"""
+        if self.vault['vault_passwords'] is None:
+            self.vault['vault_passwords'] = {}
+        self.vault['vault_passwords'][switch_name] = password
+        self._save()
+        return True
+    
+    def get_password(self, switch_name):
+        """Passwort für einen Switch abrufen"""
+        if self.vault['vault_passwords'] and switch_name in self.vault['vault_passwords']:
+            return self.vault['vault_passwords'][switch_name]
+        return self.vault.get('vault_default_password', 'neinnein')
+    
+    def remove_password(self, switch_name):
+        """Passwort für einen Switch entfernen"""
+        if self.vault['vault_passwords'] and switch_name in self.vault['vault_passwords']:
+            del self.vault['vault_passwords'][switch_name]
+            self._save()
+            return True
+        return False
 
 
 class InventoryManager:
@@ -196,9 +295,12 @@ def build_switch_data(params):
         'switch_role': params.get('switch_role', 'access'),
     }
     
-    # Connection-Daten
+    # Connection-Daten (OHNE Passwort - das kommt in vault.yml)
     if params.get('connection'):
-        data['connection'] = params['connection']
+        # Passwort aus connection entfernen falls vorhanden
+        conn = dict(params['connection'])
+        conn.pop('password', None)
+        data['connection'] = conn
     else:
         # Defaults basierend auf Switch-Typ
         if params['switch_type'] == 'cisco_2900xl':
@@ -252,7 +354,10 @@ def run_module():
         taken_at=dict(type='str', required=False),
         action=dict(type='str', default='add', choices=['add', 'update', 'remove', 'check']),
         force=dict(type='bool', default=False),
-        switch_data=dict(type='dict', required=False),  # Alternative: komplettes Dict übergeben
+        switch_data=dict(type='dict', required=False),
+        # Vault-Support
+        vault_path=dict(type='str', required=False),
+        switch_password=dict(type='str', required=False, no_log=True),
     )
     
     module = AnsibleModule(argument_spec=module_args, supports_check_mode=True)
@@ -263,18 +368,29 @@ def run_module():
         switch_name=module.params['switch_name'],
         switch_exists=False,
         was_updated=False,
+        vault_updated=False,
     )
     
     try:
         inventory_path = module.params['inventory_path']
+        vault_path = module.params.get('vault_path')
+        switch_password = module.params.get('switch_password')
         
         # Relativen Pfad auflösen
         if not os.path.isabs(inventory_path):
-            # Versuche relativ zum Playbook-Verzeichnis
             playbook_dir = os.environ.get('PWD', os.getcwd())
             inventory_path = os.path.join(playbook_dir, inventory_path)
         
+        if vault_path and not os.path.isabs(vault_path):
+            playbook_dir = os.environ.get('PWD', os.getcwd())
+            vault_path = os.path.join(playbook_dir, vault_path)
+        
         manager = InventoryManager(inventory_path)
+        
+        # Vault-Manager initialisieren wenn Pfad angegeben
+        vault_manager = None
+        if vault_path:
+            vault_manager = VaultManager(vault_path)
         
         switch_name = module.params['switch_name']
         action = module.params['action']
@@ -299,12 +415,23 @@ def run_module():
             success, message = manager.remove_switch(switch_name)
             result['changed'] = success
             result['message'] = message
+            
+            # Auch Passwort aus Vault entfernen
+            if success and vault_manager:
+                vault_manager.remove_password(switch_name)
+                result['vault_updated'] = True
+            
             module.exit_json(**result)
         
         elif action in ['add', 'update']:
             # Switch-Daten erstellen
             if module.params.get('switch_data'):
                 switch_data = module.params['switch_data']
+                # Passwort aus switch_data entfernen (kommt in vault)
+                if 'connection' in switch_data and 'password' in switch_data['connection']:
+                    if not switch_password:
+                        switch_password = switch_data['connection']['password']
+                    del switch_data['connection']['password']
             else:
                 if not module.params.get('ansible_host') or not module.params.get('switch_type'):
                     module.fail_json(
@@ -332,7 +459,15 @@ def run_module():
             result['was_updated'] = was_updated
             result['switch_data'] = switch_data
             
+            # Passwort in Vault speichern
+            if vault_manager and switch_password:
+                vault_manager.set_password(switch_name, switch_password)
+                result['vault_updated'] = True
+                result['message'] += " Password stored in vault."
+            
     except FileNotFoundError as e:
+        module.fail_json(msg=str(e), **result)
+    except ValueError as e:
         module.fail_json(msg=str(e), **result)
     except Exception as e:
         module.fail_json(msg=f"ERROR_INVENTORY_MANAGER: {str(e)}", **result)
