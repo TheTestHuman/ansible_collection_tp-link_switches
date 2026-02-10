@@ -27,3 +27,17 @@ inventory/group_vars/vault.yml
 # Temporäre Dateien
 tmp/
 temp/
+
+# Vault files (contain passwords)
+**/vault.yml
+**/vault.yaml
+
+# Backup files
+**/*.bak
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+
+# Ansible retry files
+**/*.retry
