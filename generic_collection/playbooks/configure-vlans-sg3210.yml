@@ -9,7 +9,7 @@
 # Quellen für VLANs:
 #   - inventory: VLANs aus dem Inventory-Eintrag des Switches (config.vlans)
 #   - default:   VLANs aus dem Default-Template (templates/default_sg3210.yml)
-#   - manual:    VLANs werden interaktiv abgefragt
+#   - manual:    VLANs aus der manual_vlans Variable im Playbook
 #
 # Modi:
 #   - add:     Nur neue VLANs hinzufügen
@@ -17,7 +17,7 @@
 #
 # Usage:
 #   cd ~/ansible_collection_tp-link_switches/generic_collection/
-#   ansible-playbook playbooks/configure-vlans-sg3210.yml -e "target_switch=sg3210-office"
+#   ansible-playbook playbooks/configure-vlans-sg3210.yml
 #
 # =============================================================================
 
@@ -32,7 +32,7 @@
       private: false
     
     - name: vlan_source
-      prompt: "VLAN-Quelle? (inventory = aus Inventory / default = Standard-Template / manual = manuell eingeben)"
+      prompt: "VLAN-Quelle? (inventory = aus Inventory / default = Standard-Template / manual = manuell)"
       default: "inventory"
       private: false
     
@@ -52,14 +52,8 @@
     protected_vlans: [1]
     ssh_check_timeout: 5
     
-    # Manuelle VLAN-Definition (nur wenn vlan_source=manual)
-    manual_vlans:
-      - id: 10
-        name: "Management"
-      - id: 31
-        name: "egal"
-      - id: 41
-        name: "Blödsinn"
+    # Manuelle VLAN-Definition wird aus separater Datei geladen
+    manual_vlans_file: "../templates/manual_sg3210.yml"
 
   tasks:
     # =========================================================================
@@ -98,11 +92,9 @@
       set_fact:
         switch_data: "{{ full_inventory.all.hosts[target_switch] }}"
         switch_ip: "{{ full_inventory.all.hosts[target_switch].ansible_host }}"
-        # WICHTIG: Der CLI-Hostname muss mit dem tatsächlichen Switch-Prompt übereinstimmen
-        # Bei Factory-Reset oder Standard ist das "SG3210", nicht der Inventory-Hostname
         switch_hostname: "SG3210"
         switch_user: "{{ full_inventory.all.vars.ansible_user | default('admin') }}"
-        switch_password: "{{ vault_data.vault_passwords[target_switch] | default(vault_data.vault_default_password) | default('neinnein') }}"
+        switch_password: "{{ vault_data.vault_passwords[target_switch] | default(vault_data.vault_default_password) | default('admin') }}"
     
     - name: "INIT: Zeige Switch-Info"
       debug:
@@ -140,9 +132,15 @@
             target_vlans: "{{ default_config.vlans | default([]) }}"
       when: vlan_source == "default"
     
-    - name: "VLANS: Nutze manuelle Definition"
-      set_fact:
-        target_vlans: "{{ manual_vlans }}"
+    - name: "VLANS: Lade manuelle Definition"
+      block:
+        - name: Lade manuelle VLAN-Datei
+          include_vars:
+            file: "{{ manual_vlans_file }}"
+            name: manual_config
+        - name: Setze VLANs aus manueller Datei
+          set_fact:
+            target_vlans: "{{ manual_config.vlans | default([]) }}"
       when: vlan_source == "manual"
     
     - name: "VLANS: Prüfe ob VLANs vorhanden"
@@ -167,7 +165,9 @@
         msg: |
           Zu konfigurierende VLANs ({{ target_vlans | length }}):
           {% for vlan in target_vlans %}
-            VLAN {{ vlan.id }}: {{ vlan.name }}
+            VLAN {{ vlan.vlan_id }}: {{ vlan.name }}
+              Tagged:   {{ vlan.tagged_ports | default([]) | join(', ') | default('keine') }}
+              Untagged: {{ vlan.untagged_ports | default([]) | join(', ') | default('keine') }}
           {% endfor %}
 
     # =========================================================================
@@ -279,7 +279,7 @@
           
           Konfigurierte VLANs:
           {% for vlan in target_vlans %}
-            VLAN {{ vlan.id }}: {{ vlan.name }}
+            VLAN {{ vlan.vlan_id }}: {{ vlan.name }}
           {% endfor %}
           
           Inventory:  {{ 'Aktualisiert' if (update_inventory | lower == 'yes') else 'Nicht aktualisiert' }}

@@ -1,0 +1,35 @@
+---
+# =============================================================================
+# Manuelle VLAN-Konfiguration: TP-Link SG3210
+# =============================================================================
+# Diese Datei wird verwendet wenn vlan_source=manual gewählt wird.
+# Hier können eigene VLANs definiert werden.
+#
+# Port-Layout SG3210 (10 Ports):
+#   Port 1:    Uplink/Trunk (tagged für alle VLANs)
+#   Port 2:    Management (untagged)
+#   Port 3-8:  Clients (untagged)
+#   Port 9-10: Reserved
+#
+# Struktur:
+#   - vlan_id: VLAN-Nummer (1-4094)
+#     name: VLAN-Name
+#     tagged_ports: Liste von Trunk-Ports (802.1Q tagged)
+#     untagged_ports: Liste von Access-Ports (untagged)
+# =============================================================================
+
+vlans:
+  - vlan_id: 1
+    name: "default"
+    tagged_ports: []
+    untagged_ports: [1, 9, 10]
+  
+  - vlan_id: 10
+    name: "Management"
+    tagged_ports: [1]
+    untagged_ports: [2]
+  
+  - vlan_id: 21
+    name: "dummer_test"
+    tagged_ports: [1]
+    untagged_ports: [3, 4, 5, 6, 7, 8]

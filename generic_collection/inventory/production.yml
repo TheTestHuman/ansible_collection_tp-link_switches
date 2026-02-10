@@ -288,12 +288,57 @@ all:
           - 6
           - 7
           - 8
+    sg3210-test1:
+      ansible_host: 10.0.10.1
+      switch_type: tp_link_sg3210
+      switch_model: TL-SG3210
+      switch_location: TestLab
+      switch_role: access
+      connection:
+        protocol: ssh
+        port: 22
+      cli:
+        hostname: TEST1
+        enable_command: enable
+      ownership:
+        taken: true
+        taken_at: null
+        firmware_version: unknown
+      config:
+        vlans:
+        - vlan_id: 1
+          name: default
+          tagged_ports: []
+          untagged_ports:
+          - 1
+          - 9
+          - 10
+        - vlan_id: 10
+          name: Management
+          tagged_ports:
+          - 1
+          untagged_ports:
+          - 2
+        - vlan_id: 22
+          name: Manueller_shit
+          tagged_ports:
+          - 1
+          untagged_ports:
+          - 3
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
+        ports: {}
+        lag: {}
   children:
     tp_link_sg3210:
       hosts:
         sg3210-office: null
         sg3210-warehouse: null
         sg3210-lab: null
+        sg3210-test1: null
     tp_link_sg108e:
       hosts:
         sg108e-meeting: null

@@ -2,59 +2,48 @@
 # =============================================================================
 # Default-Konfiguration: TP-Link SG3210
 # =============================================================================
-# Diese Konfiguration wird bei Take-Ownership mit Option "default" verwendet.
-# Kann im Playbook überschrieben oder hier angepasst werden.
+# Diese Konfiguration wird bei VLAN-Konfiguration mit Option "default" verwendet.
+#
+# Port-Layout (10 Ports):
+#   Port 1: Uplink/Trunk (tagged für alle VLANs)
+#   Port 2: Management (untagged VLAN 10)
+#   Port 3-8: Clients (untagged VLAN 20)
+#   Port 9-10: Reserved (untagged VLAN 1)
+#
+# WICHTIG: Das SG3210-Modul erwartet:
+#   - vlan_id (nicht id)
+#   - tagged_ports: Liste von Portnummern
+#   - untagged_ports: Liste von Portnummern
 # =============================================================================
 
 vlans:
-  - id: 1
+  - vlan_id: 1
     name: "default"
-  - id: 10
+    tagged_ports: []
+    untagged_ports: [1, 9, 10]
+  
+  - vlan_id: 10
     name: "Management"
-  - id: 20
-    name: "Clients"
+    tagged_ports: [1]
+    untagged_ports: [2]
+  
+  - vlan_id: 22
+    name: "Manueller_shit"
+    tagged_ports: [1]
+    untagged_ports: [3, 4, 5, 6, 7, 8]
 
-ports:
-  1:
-    description: "Uplink"
-    mode: "trunk"
-    allowed_vlans: [1, 10, 20]
-    native_vlan: 1
-  2:
-    description: "Management"
-    mode: "access"
-    vlan: 10
-  3:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  4:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  5:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  6:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  7:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  8:
-    description: "Client"
-    mode: "access"
-    vlan: 20
-  9:
-    description: "Reserved"
-    mode: "access"
-    vlan: 1
-  10:
-    description: "Reserved"
-    mode: "access"
-    vlan: 1
+# Port-Beschreibungen (für Dokumentation)
+port_descriptions:
+  1: "Uplink/Trunk"
+  2: "Management"
+  3: "Client"
+  4: "Client"
+  5: "Client"
+  6: "Client"
+  7: "Client"
+  8: "Client"
+  9: "Reserved"
+  10: "Reserved"
 
+# LAG-Konfiguration (optional)
 lag: {}

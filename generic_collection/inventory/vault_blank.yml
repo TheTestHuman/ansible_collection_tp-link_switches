@@ -1,0 +1,29 @@
+---
+# =============================================================================
+# Ansible Vault - Credentials
+# =============================================================================
+# Diese Datei enthält alle Passwörter für die Switches.
+#
+# WICHTIG: Diese Datei sollte verschlüsselt werden:
+#   ansible-vault encrypt vault.yml
+#
+# Zum Bearbeiten:
+#   ansible-vault edit vault.yml
+#
+# Zum Ausführen von Playbooks:
+#   ansible-playbook playbook.yml --ask-vault-pass
+#   oder
+#   ansible-playbook playbook.yml --vault-password-file ~/.vault_pass
+# =============================================================================
+
+# Default-Credentials (werden verwendet wenn kein Switch-spezifisches Passwort existiert)
+vault_default_username: admin
+vault_default_password: admin
+
+# Switch-spezifische Passwörter
+# Format: switch_name: passwort
+vault_passwords: {}
+  # Beispiele:
+  # sg3210-office: geheimes_passwort
+  # sg108e-meeting: anderes_passwort
+  # 2900xl-lab: cisco_passwort

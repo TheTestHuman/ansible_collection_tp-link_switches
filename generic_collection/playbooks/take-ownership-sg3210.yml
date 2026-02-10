@@ -8,8 +8,7 @@
 # Ablauf:
 #   Stage 1: Passwort setzen + SSH aktivieren (via Telnet)
 #   Stage 2: IP-Adresse ändern (via SSH)
-#   Stage 3: Optional VLANs konfigurieren
-#   Stage 4: Inventory aktualisieren
+#   Stage 3: Inventory aktualisieren
 #
 # Voraussetzungen:
 #   - Workstation muss im gleichen Netzwerk wie Factory-Default Switch sein (192.168.0.x)
@@ -23,6 +22,7 @@
 # Nach Abschluss:
 #   - Workstation-IP auf Ziel-Netzwerk ändern
 #   - Switch ist unter neuer IP per SSH erreichbar
+#   - VLANs mit configure-vlans-sg3210.yml konfigurieren
 # =============================================================================
 
 - name: TP-Link SG3210 - Take Ownership
@@ -57,11 +57,6 @@
       prompt: "Neues Admin-Passwort für den Switch"
       private: true
     
-    - name: config_mode
-      prompt: "Config-Modus? (default = Standard-VLANs anlegen / skip = nur registrieren)"
-      default: "skip"
-      private: false
-    
     - name: update_inventory
       prompt: "Switch ins Inventory eintragen? (yes/no)"
       default: "yes"
@@ -76,7 +71,6 @@
     # Derived settings
     switch_name: "sg3210-{{ switch_suffix }}"
     # WICHTIG: Der CLI-Hostname ist bei Factory-Reset immer "SG3210"
-    # Er kann erst nach dem Setup geändert werden
     cli_hostname: "SG3210"
     inventory_file: "{{ playbook_dir }}/../inventory/production.yml"
     vault_file: "{{ playbook_dir }}/../inventory/vault.yml"
@@ -214,45 +208,13 @@
           
           HINWEIS: Verbindung wurde getrennt (erwartet nach IP-Änderung)
           
-          Um VLANs zu konfigurieren oder den Switch zu erreichen:
-          1. Workstation-IP auf {{ switch_ip | regex_replace('\.[0-9]+$', '.x') }} ändern
-          2. SSH: ssh {{ factory_default_user }}@{{ switch_ip }}
-          
           ═══════════════════════════════════════════════════════════
 
     # =========================================================================
-    # STAGE 3: VLANs konfigurieren (optional)
+    # STAGE 3: Inventory aktualisieren
     # =========================================================================
     
-    - name: "STAGE 3: Hinweis zu VLANs"
-      debug:
-        msg: |
-          ═══════════════════════════════════════════════════════════
-          VLAN-KONFIGURATION
-          ═══════════════════════════════════════════════════════════
-          
-          Config-Modus: {{ config_mode }}
-          
-          {% if config_mode == 'default' %}
-          ACHTUNG: VLANs können erst konfiguriert werden, wenn die
-          Workstation im neuen Netzwerk ({{ switch_ip | regex_replace('\.[0-9]+$', '.x') }}) ist!
-          
-          Bitte führe nach dem Netzwerkwechsel folgendes aus:
-          
-            ansible-playbook playbooks/configure-vlans-sg3210.yml \
-              -e "target_switch={{ switch_name }}"
-          
-          {% else %}
-          VLANs werden nicht konfiguriert (config_mode=skip).
-          {% endif %}
-          ═══════════════════════════════════════════════════════════
-      when: config_mode == "default"
-
-    # =========================================================================
-    # STAGE 4: Inventory aktualisieren
-    # =========================================================================
-    
-    - name: "STAGE 4: Prüfe ob Switch bereits im Inventory existiert"
+    - name: "STAGE 3: Prüfe ob Switch bereits im Inventory existiert"
       inventory_manager:
         inventory_path: "{{ inventory_file }}"
         switch_name: "{{ switch_name }}"
@@ -260,7 +222,7 @@
       register: inventory_check
       when: update_inventory | lower == "yes"
     
-    - name: "STAGE 4: Warnung - Switch existiert bereits"
+    - name: "STAGE 3: Warnung - Switch existiert bereits"
       pause:
         prompt: |
           
@@ -272,14 +234,14 @@
         - update_inventory | lower == "yes"
         - inventory_check.switch_exists | default(false)
     
-    - name: "STAGE 4: Setze force-Flag"
+    - name: "STAGE 3: Setze force-Flag"
       set_fact:
         force_update: "{{ overwrite_prompt.user_input | default('no') | lower == 'yes' }}"
       when: 
         - update_inventory | lower == "yes"
         - inventory_check.switch_exists | default(false)
     
-    - name: "STAGE 4: Füge Switch zum Inventory hinzu"
+    - name: "STAGE 3: Füge Switch zum Inventory hinzu"
       inventory_manager:
         inventory_path: "{{ inventory_file }}"
         vault_path: "{{ vault_file }}"
@@ -305,7 +267,7 @@
         - update_inventory | lower == "yes"
         - (not inventory_check.switch_exists | default(false)) or (force_update | default(false))
     
-    - name: "STAGE 4: Zeige Inventory-Ergebnis"
+    - name: "STAGE 3: Zeige Inventory-Ergebnis"
       debug:
         msg: "✓ {{ inventory_result.message }}"
       when: 
@@ -339,10 +301,8 @@
           
           1. Workstation-IP auf {{ switch_ip | regex_replace('\.[0-9]+$', '.x') }} Bereich ändern
           2. Verbindung testen: ssh admin@{{ switch_ip }}
-          {% if config_mode == 'default' %}
           3. VLANs konfigurieren:
              ansible-playbook playbooks/configure-vlans-sg3210.yml \
                -e "target_switch={{ switch_name }}"
-          {% endif %}
           
           ═══════════════════════════════════════════════════════════
