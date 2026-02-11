@@ -62,7 +62,7 @@
       tp_link_config_backup:
         host: "{{ ansible_host }}"
         username: "{{ ansible_user | default('admin') }}"
-        password: "{{ ansible_password | default('neinnein') }}"
+        password: "{{ ansible_password | default('admin123') }}"
         hostname: "{{ cli.hostname | default('SG3210') }}"
         action: backup_local
         backup_dir: "{{ backup_dir }}"

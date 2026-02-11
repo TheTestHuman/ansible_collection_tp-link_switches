@@ -1,0 +1,309 @@
+---
+# =============================================================================
+# Configure LAG on TP-Link SG3210 Switches
+# =============================================================================
+#
+# Dieses Playbook konfiguriert Link Aggregation Groups (LAG) auf TP-Link SG3210
+# Switches mit verschiedenen Quellen und Inventory-Integration.
+#
+# Quellen für LAG:
+#   - inventory: LAG aus dem Inventory-Eintrag des Switches (config.lag)
+#   - default:   LAG aus dem Default-Template (templates/default_sg3210.yml)
+#   - manual:    LAG manuell im Prompt eingeben
+#
+# LACP-Modi:
+#   - active:  Initiiert LACP-Aushandlung
+#   - passive: Reagiert auf LACP-Aushandlung
+#   - on:      Statischer LAG ohne LACP
+#
+# Usage:
+#   cd ~/ansible_collection_tp-link_switches/generic_collection/
+#   ansible-playbook playbooks/configure-lag-sg3210.yml
+#
+# =============================================================================
+
+- name: Configure LAG on TP-Link SG3210
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  
+  vars_prompt:
+    - name: target_switch
+      prompt: "Switch-Name aus Inventory (z.B. sg3210-office)"
+      private: false
+    
+    - name: lag_source
+      prompt: "LAG-Quelle? (inventory = aus Inventory / default = Standard-Template / manual = manuell eingeben)"
+      default: "inventory"
+      private: false
+    
+    - name: lag_state
+      prompt: "Status? (present = erstellen / absent = entfernen)"
+      default: "present"
+      private: false
+    
+    - name: update_inventory
+      prompt: "Inventory nach Konfiguration aktualisieren? (yes/no)"
+      default: "yes"
+      private: false
+
+  vars:
+    inventory_file: "{{ playbook_dir }}/../inventory/production.yml"
+    vault_file: "{{ playbook_dir }}/../inventory/vault.yml"
+    ssh_check_timeout: 5
+
+  tasks:
+    # =========================================================================
+    # SCHRITT 1: Switch-Daten aus Inventory laden
+    # =========================================================================
+    
+    - name: "INIT: Lade Inventory"
+      include_vars:
+        file: "{{ inventory_file }}"
+        name: full_inventory
+    
+    - name: "INIT: Lade Vault"
+      include_vars:
+        file: "{{ vault_file }}"
+        name: vault_data
+      ignore_errors: yes
+    
+    - name: "INIT: Prüfe ob Switch existiert"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Switch '{{ target_switch }}' nicht im Inventory!
+          ═══════════════════════════════════════════════════════════
+          
+          Verfügbare SG3210 Switches:
+          {% for host, data in full_inventory.all.hosts.items() %}
+          {% if data.switch_type | default('') == 'tp_link_sg3210' %}
+            - {{ host }} ({{ data.ansible_host }})
+          {% endif %}
+          {% endfor %}
+          
+          ═══════════════════════════════════════════════════════════
+      when: target_switch not in full_inventory.all.hosts
+    
+    - name: "INIT: Extrahiere Switch-Daten"
+      set_fact:
+        switch_data: "{{ full_inventory.all.hosts[target_switch] }}"
+        switch_ip: "{{ full_inventory.all.hosts[target_switch].ansible_host }}"
+        switch_hostname: "SG3210"
+        switch_user: "{{ full_inventory.all.vars.ansible_user | default('admin') }}"
+        switch_password: "{{ vault_data.vault_passwords[target_switch] | default(vault_data.vault_default_password) | default('admin') }}"
+    
+    - name: "INIT: Zeige Switch-Info"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          LAG-KONFIGURATION - {{ target_switch }}
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }}
+          IP:         {{ switch_ip }}
+          Hostname:   {{ switch_hostname }}
+          
+          Quelle:     {{ lag_source }}
+          Status:     {{ lag_state }}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 2: LAG aus gewählter Quelle laden
+    # =========================================================================
+    
+    - name: "LAG: Lade aus Inventory"
+      set_fact:
+        target_lags: "{{ switch_data.config.lag | default([]) }}"
+      when: lag_source == "inventory"
+    
+    - name: "LAG: Lade Default-Template"
+      block:
+        - name: Lade Template-Datei
+          include_vars:
+            file: "../templates/default_sg3210.yml"
+            name: default_config
+        - name: Setze LAGs aus Template
+          set_fact:
+            target_lags: "{{ default_config.lag | default([]) }}"
+      when: lag_source == "default"
+    
+    - name: "LAG: Manuelle Eingabe"
+      block:
+        - name: "Frage LAG-ID"
+          pause:
+            prompt: "LAG-ID (1-8)"
+          register: manual_lag_id
+        
+        - name: "Frage Ports"
+          pause:
+            prompt: "Ports (kommagetrennt, z.B. 9,10)"
+          register: manual_ports
+        
+        - name: "Frage LACP-Modus"
+          pause:
+            prompt: "LACP-Modus (active/passive/on)"
+          register: manual_lacp_mode
+        
+        - name: "Setze manuellen LAG"
+          set_fact:
+            target_lags:
+              - lag_id: "{{ manual_lag_id.user_input | int }}"
+                ports: "{{ manual_ports.user_input.split(',') | map('trim') | map('int') | list }}"
+                lacp_mode: "{{ manual_lacp_mode.user_input | default('active') }}"
+                description: "Manuell konfiguriert"
+      when: lag_source == "manual"
+    
+    - name: "LAG: Prüfe ob LAGs vorhanden"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Keine LAG-Konfiguration gefunden!
+          ═══════════════════════════════════════════════════════════
+          
+          Quelle '{{ lag_source }}' enthält keine LAG-Definition.
+          
+          {% if lag_source == 'inventory' %}
+          Der Switch '{{ target_switch }}' hat keine config.lag im Inventory.
+          Bitte zuerst LAG im Inventory definieren oder 'default' als Quelle wählen.
+          {% endif %}
+          
+          ═══════════════════════════════════════════════════════════
+      when: target_lags | length == 0
+    
+    - name: "LAG: Zeige zu konfigurierende LAGs"
+      debug:
+        msg: |
+          Zu konfigurierende LAGs ({{ target_lags | length }}):
+          {% for lag in target_lags %}
+            LAG {{ lag.lag_id }}: Ports {{ lag.ports | join(', ') }} ({{ lag.lacp_mode | default('active') }})
+              {% if lag.description is defined %}Beschreibung: {{ lag.description }}{% endif %}
+          {% endfor %}
+
+    # =========================================================================
+    # SCHRITT 3: Konnektivität prüfen
+    # =========================================================================
+    
+    - name: "CHECK: SSH-Verbindung prüfen"
+      wait_for:
+        host: "{{ switch_ip }}"
+        port: 22
+        timeout: "{{ ssh_check_timeout }}"
+      register: ssh_check
+      ignore_errors: yes
+    
+    - name: "CHECK: Fehler wenn nicht erreichbar"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Switch nicht erreichbar!
+          ═══════════════════════════════════════════════════════════
+          
+          Switch '{{ target_switch }}' ({{ switch_ip }}) ist nicht per SSH erreichbar.
+          
+          Bitte prüfen:
+          1. Switch ist eingeschaltet
+          2. Netzwerkverbindung besteht
+          3. SSH ist aktiviert
+          4. IP-Adresse stimmt
+          
+          ═══════════════════════════════════════════════════════════
+      when: ssh_check is failed
+
+    # =========================================================================
+    # SCHRITT 4: LAGs konfigurieren
+    # =========================================================================
+    
+    - name: "CONFIG: LAGs konfigurieren"
+      tp_link_lag_expect:
+        host: "{{ switch_ip }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_password }}"
+        hostname: "{{ switch_hostname }}"
+        lag_id: "{{ item.lag_id }}"
+        ports: "{{ item.ports }}"
+        lacp_mode: "{{ item.lacp_mode | default('active') }}"
+        state: "{{ lag_state }}"
+      loop: "{{ target_lags }}"
+      register: lag_results
+    
+    - name: "CONFIG: Zeige Ergebnisse"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ LAG-KONFIGURATION ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }}
+          Status:     {{ lag_state }}
+          
+          Ergebnisse:
+          {% for result in lag_results.results %}
+            LAG {{ result.item.lag_id }}: {{ result.msg }}
+          {% endfor %}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 5: Inventory aktualisieren
+    # =========================================================================
+    
+    - name: "INVENTORY: Aktualisiere config.lag"
+      inventory_manager:
+        inventory_path: "{{ inventory_file }}"
+        switch_name: "{{ target_switch }}"
+        switch_data:
+          ansible_host: "{{ switch_ip }}"
+          switch_type: "{{ switch_data.switch_type }}"
+          switch_model: "{{ switch_data.switch_model | default('TL-SG3210') }}"
+          switch_location: "{{ switch_data.switch_location | default('Unknown') }}"
+          switch_role: "{{ switch_data.switch_role | default('access') }}"
+          connection: "{{ switch_data.connection | default({'protocol': 'ssh', 'port': 22}) }}"
+          cli: "{{ switch_data.cli | default({'hostname': 'SG3210', 'enable_command': 'enable'}) }}"
+          ownership: "{{ switch_data.ownership | default({}) }}"
+          config:
+            vlans: "{{ switch_data.config.vlans | default([]) }}"
+            ports: "{{ switch_data.config.ports | default({}) }}"
+            lag: "{{ target_lags if lag_state == 'present' else [] }}"
+        action: update
+        force: true
+      register: inventory_result
+      when: update_inventory | lower == "yes"
+    
+    - name: "INVENTORY: Zeige Ergebnis"
+      debug:
+        msg: "✓ Inventory aktualisiert: {{ inventory_result.message }}"
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_result is defined
+
+    # =========================================================================
+    # ZUSAMMENFASSUNG
+    # =========================================================================
+    
+    - name: "COMPLETE: Zusammenfassung"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ LAG-KONFIGURATION ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }} ({{ switch_ip }})
+          Quelle:     {{ lag_source }}
+          Status:     {{ lag_state }}
+          
+          Konfigurierte LAGs:
+          {% for lag in target_lags %}
+            LAG {{ lag.lag_id }}: Ports {{ lag.ports | join(', ') }} ({{ lag.lacp_mode | default('active') }})
+          {% endfor %}
+          
+          Inventory:  {{ 'Aktualisiert' if (update_inventory | lower == 'yes') else 'Nicht aktualisiert' }}
+          
+          ═══════════════════════════════════════════════════════════
+          
+          Verifizieren mit:
+            ssh {{ switch_user }}@{{ switch_ip }}
+            show etherchannel summary
+          
+          ═══════════════════════════════════════════════════════════
