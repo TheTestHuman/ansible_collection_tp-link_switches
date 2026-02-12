@@ -374,8 +374,51 @@ all:
           - 6
           - 7
           - 8
-        ports: {}
         lag: []
+        ports: {}
+        port_security:
+        - port: 2
+          max_mac_count: 1
+          mode: permanent
+          status: drop
+          exceed_notification: true
+          description: Management - strikt
+        - port: 3
+          max_mac_count: 3
+          mode: dynamic
+          status: forward
+          exceed_notification: true
+          description: Client
+        - port: 4
+          max_mac_count: 3
+          mode: dynamic
+          status: forward
+          exceed_notification: true
+          description: Client
+        - port: 5
+          max_mac_count: 3
+          mode: dynamic
+          status: forward
+          exceed_notification: true
+          description: Client
+        - port: 6
+          max_mac_count: 3
+          mode: dynamic
+          status: forward
+          exceed_notification: true
+          description: Client
+        - port: 7
+          max_mac_count: 3
+          mode: dynamic
+          status: forward
+          exceed_notification: true
+          description: Client
+        - port: 8
+          max_mac_count: 3
+          mode: dynamic
+          status: forward
+          exceed_notification: true
+          description: Client
   children:
     tp_link_sg3210:
       hosts:

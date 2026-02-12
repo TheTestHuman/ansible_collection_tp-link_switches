@@ -1,0 +1,386 @@
+---
+# =============================================================================
+# Configure Port Security on TP-Link SG3210 Switches
+# =============================================================================
+#
+# Dieses Playbook konfiguriert Port Security auf TP-Link SG3210 Switches.
+#
+# Quellen für Port-Security:
+#   - inventory: Aus dem Inventory-Eintrag des Switches (config.port_security)
+#   - default:   Aus dem Default-Template (templates/default_sg3210.yml)
+#   - manual:    Manuell im Prompt eingeben
+#
+# Reset-Others:
+#   - yes: Alle Ports die NICHT in der Liste sind werden auf Default zurückgesetzt
+#   - no:  Nur gelistete Ports werden konfiguriert, Rest bleibt unverändert
+#
+# Usage:
+#   cd ~/ansible_collection_tp-link_switches/generic_collection/
+#   ansible-playbook playbooks/configure-port-security-sg3210.yml
+#
+# =============================================================================
+
+- name: Configure Port Security on TP-Link SG3210
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  
+  vars_prompt:
+    - name: target_switch
+      prompt: "Switch-Name aus Inventory (z.B. sg3210-office)"
+      private: false
+    
+    - name: security_source
+      prompt: "Port-Security Quelle? (inventory / default / manual)"
+      default: "inventory"
+      private: false
+    
+    - name: security_state
+      prompt: "Status? (present = aktivieren / absent = deaktivieren)"
+      default: "present"
+      private: false
+    
+    - name: reset_others
+      prompt: "Nicht gelistete Ports zurücksetzen? (yes/no)"
+      default: "no"
+      private: false
+    
+    - name: update_inventory
+      prompt: "Inventory nach Konfiguration aktualisieren? (yes/no)"
+      default: "yes"
+      private: false
+
+  vars:
+    inventory_file: "{{ playbook_dir }}/../inventory/production.yml"
+    vault_file: "{{ playbook_dir }}/../inventory/vault.yml"
+    ssh_check_timeout: 5
+    all_ports: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+  tasks:
+    # =========================================================================
+    # SCHRITT 1: Switch-Daten aus Inventory laden
+    # =========================================================================
+    
+    - name: "INIT: Lade Inventory"
+      include_vars:
+        file: "{{ inventory_file }}"
+        name: full_inventory
+    
+    - name: "INIT: Lade Vault"
+      include_vars:
+        file: "{{ vault_file }}"
+        name: vault_data
+      ignore_errors: yes
+    
+    - name: "INIT: Prüfe ob Switch existiert"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Switch '{{ target_switch }}' nicht im Inventory!
+          ═══════════════════════════════════════════════════════════
+          
+          Verfügbare SG3210 Switches:
+          {% for host, data in full_inventory.all.hosts.items() %}
+          {% if data.switch_type | default('') == 'tp_link_sg3210' %}
+            - {{ host }} ({{ data.ansible_host }})
+          {% endif %}
+          {% endfor %}
+          
+          ═══════════════════════════════════════════════════════════
+      when: target_switch not in full_inventory.all.hosts
+    
+    - name: "INIT: Extrahiere Switch-Daten"
+      set_fact:
+        switch_data: "{{ full_inventory.all.hosts[target_switch] }}"
+        switch_ip: "{{ full_inventory.all.hosts[target_switch].ansible_host }}"
+        switch_hostname: "SG3210"
+        switch_user: "{{ full_inventory.all.vars.ansible_user | default('admin') }}"
+        switch_password: "{{ vault_data.vault_passwords[target_switch] | default(vault_data.vault_default_password) | default('admin') }}"
+    
+    - name: "INIT: Zeige Switch-Info"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          PORT-SECURITY KONFIGURATION - {{ target_switch }}
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:        {{ target_switch }}
+          IP:            {{ switch_ip }}
+          Hostname:      {{ switch_hostname }}
+          
+          Quelle:        {{ security_source }}
+          Status:        {{ security_state }}
+          Reset Others:  {{ reset_others }}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 2: Port-Security aus gewählter Quelle laden
+    # =========================================================================
+    
+    - name: "SECURITY: Lade aus Inventory"
+      set_fact:
+        target_port_security: "{{ switch_data.config.port_security | default([]) }}"
+      when: security_source == "inventory"
+    
+    - name: "SECURITY: Lade Default-Template"
+      block:
+        - name: Lade Template-Datei
+          include_vars:
+            file: "../templates/default_sg3210.yml"
+            name: default_config
+        - name: Setze Port-Security aus Template
+          set_fact:
+            target_port_security: "{{ default_config.port_security | default([]) }}"
+      when: security_source == "default"
+    
+    - name: "SECURITY: Manuelle Eingabe"
+      block:
+        - name: "Frage Port"
+          pause:
+            prompt: "Port-Nummer (1-10)"
+          register: manual_port
+        
+        - name: "Frage Max MAC Count"
+          pause:
+            prompt: "Max MAC-Adressen (0-64, default: 1)"
+          register: manual_max_mac
+        
+        - name: "Frage Mode"
+          pause:
+            prompt: "Mode (dynamic/static/permanent, default: dynamic)"
+          register: manual_mode
+        
+        - name: "Frage Status"
+          pause:
+            prompt: "Violation Action (forward/drop/disable, default: drop)"
+          register: manual_status
+        
+        - name: "Frage Notification"
+          pause:
+            prompt: "Exceed Notification (true/false, default: true)"
+          register: manual_notification
+        
+        - name: "Setze manuelle Port-Security"
+          set_fact:
+            target_port_security:
+              - port: "{{ manual_port.user_input | int }}"
+                max_mac_count: "{{ manual_max_mac.user_input | default('1') | int }}"
+                mode: "{{ manual_mode.user_input | default('dynamic') }}"
+                status: "{{ manual_status.user_input | default('drop') }}"
+                exceed_notification: "{{ manual_notification.user_input | default('true') | bool }}"
+                description: "Manuell konfiguriert"
+      when: security_source == "manual"
+    
+    - name: "SECURITY: Prüfe ob Konfiguration vorhanden"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Keine Port-Security Konfiguration gefunden!
+          ═══════════════════════════════════════════════════════════
+          
+          Quelle '{{ security_source }}' enthält keine Port-Security Definition.
+          
+          {% if security_source == 'inventory' %}
+          Der Switch '{{ target_switch }}' hat keine config.port_security im Inventory.
+          Bitte zuerst Port-Security im Inventory definieren oder 'default' wählen.
+          {% endif %}
+          
+          ═══════════════════════════════════════════════════════════
+      when: target_port_security | length == 0
+    
+    - name: "SECURITY: Zeige zu konfigurierende Ports"
+      debug:
+        msg: |
+          Zu konfigurierende Port-Security ({{ target_port_security | length }} Ports):
+          {% for ps in target_port_security %}
+            Port {{ ps.port }}: Max {{ ps.max_mac_count }} MACs, Mode: {{ ps.mode }}, Action: {{ ps.status }}
+              {% if ps.description is defined %}Beschreibung: {{ ps.description }}{% endif %}
+          {% endfor %}
+
+    # =========================================================================
+    # SCHRITT 2b: Reset-Liste berechnen (wenn reset_others aktiviert)
+    # =========================================================================
+    
+    - name: "SECURITY: Berechne konfigurierte Ports"
+      set_fact:
+        configured_ports: "{{ target_port_security | map(attribute='port') | list }}"
+      when: reset_others | lower == "yes"
+    
+    - name: "SECURITY: Berechne Ports zum Zurücksetzen"
+      set_fact:
+        ports_to_reset: "{{ all_ports | difference(configured_ports) }}"
+      when: reset_others | lower == "yes"
+    
+    - name: "SECURITY: Zeige Reset-Info"
+      debug:
+        msg: |
+          Reset aktiviert - folgende Ports werden zurückgesetzt:
+          {{ ports_to_reset | join(', ') }}
+      when: 
+        - reset_others | lower == "yes"
+        - ports_to_reset | length > 0
+
+    # =========================================================================
+    # SCHRITT 3: Konnektivität prüfen
+    # =========================================================================
+    
+    - name: "CHECK: SSH-Verbindung prüfen"
+      wait_for:
+        host: "{{ switch_ip }}"
+        port: 22
+        timeout: "{{ ssh_check_timeout }}"
+      register: ssh_check
+      ignore_errors: yes
+    
+    - name: "CHECK: Fehler wenn nicht erreichbar"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Switch nicht erreichbar!
+          ═══════════════════════════════════════════════════════════
+          
+          Switch '{{ target_switch }}' ({{ switch_ip }}) ist nicht per SSH erreichbar.
+          
+          Bitte prüfen:
+          1. Switch ist eingeschaltet
+          2. Netzwerkverbindung besteht
+          3. SSH ist aktiviert
+          4. IP-Adresse stimmt
+          
+          ═══════════════════════════════════════════════════════════
+      when: ssh_check is failed
+
+    # =========================================================================
+    # SCHRITT 4: Port-Security konfigurieren
+    # =========================================================================
+    
+    - name: "CONFIG: Port-Security konfigurieren"
+      tp_link_port_security_expect:
+        host: "{{ switch_ip }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_password }}"
+        hostname: "{{ switch_hostname }}"
+        port: "{{ item.port }}"
+        max_mac_count: "{{ item.max_mac_count | default(1) }}"
+        mode: "{{ item.mode | default('dynamic') }}"
+        status: "{{ item.status | default('forward') }}"
+        exceed_notification: "{{ item.exceed_notification | default(false) }}"
+        state: "{{ security_state }}"
+      loop: "{{ target_port_security }}"
+      register: security_results
+    
+    - name: "CONFIG: Zeige Ergebnisse"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ PORT-SECURITY KONFIGURATION ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }}
+          Status:     {{ security_state }}
+          
+          Ergebnisse:
+          {% for result in security_results.results %}
+            Port {{ result.item.port }}: {{ result.msg }}
+          {% endfor %}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 4b: Nicht gelistete Ports zurücksetzen
+    # =========================================================================
+    
+    - name: "RESET: Port-Security auf nicht gelisteten Ports deaktivieren"
+      tp_link_port_security_expect:
+        host: "{{ switch_ip }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_password }}"
+        hostname: "{{ switch_hostname }}"
+        port: "{{ item }}"
+        state: absent
+      loop: "{{ ports_to_reset }}"
+      register: reset_results
+      when: 
+        - reset_others | lower == "yes"
+        - ports_to_reset is defined
+        - ports_to_reset | length > 0
+    
+    - name: "RESET: Zeige Reset-Ergebnisse"
+      debug:
+        msg: |
+          Zurückgesetzte Ports:
+          {% for result in reset_results.results %}
+            Port {{ result.item }}: {{ result.msg }}
+          {% endfor %}
+      when: 
+        - reset_others | lower == "yes"
+        - reset_results is defined
+        - reset_results.results is defined
+        - reset_results.results | length > 0
+
+    # =========================================================================
+    # SCHRITT 5: Inventory aktualisieren
+    # =========================================================================
+    
+    - name: "INVENTORY: Aktualisiere config.port_security"
+      inventory_manager:
+        inventory_path: "{{ inventory_file }}"
+        switch_name: "{{ target_switch }}"
+        switch_data:
+          ansible_host: "{{ switch_ip }}"
+          switch_type: "{{ switch_data.switch_type }}"
+          switch_model: "{{ switch_data.switch_model | default('TL-SG3210') }}"
+          switch_location: "{{ switch_data.switch_location | default('Unknown') }}"
+          switch_role: "{{ switch_data.switch_role | default('access') }}"
+          connection: "{{ switch_data.connection | default({'protocol': 'ssh', 'port': 22}) }}"
+          cli: "{{ switch_data.cli | default({'hostname': 'SG3210', 'enable_command': 'enable'}) }}"
+          ownership: "{{ switch_data.ownership | default({}) }}"
+          config:
+            vlans: "{{ switch_data.config.vlans | default([]) }}"
+            lag: "{{ switch_data.config.lag | default([]) }}"
+            ports: "{{ switch_data.config.ports | default({}) }}"
+            port_security: "{{ target_port_security if security_state == 'present' else [] }}"
+        action: update
+        force: true
+      register: inventory_result
+      when: update_inventory | lower == "yes"
+    
+    - name: "INVENTORY: Zeige Ergebnis"
+      debug:
+        msg: "✓ Inventory aktualisiert: {{ inventory_result.message }}"
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_result is defined
+
+    # =========================================================================
+    # ZUSAMMENFASSUNG
+    # =========================================================================
+    
+    - name: "COMPLETE: Zusammenfassung"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ PORT-SECURITY KONFIGURATION ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }} ({{ switch_ip }})
+          Quelle:     {{ security_source }}
+          Status:     {{ security_state }}
+          
+          Konfigurierte Ports ({{ target_port_security | length }}):
+          {% for ps in target_port_security %}
+            Port {{ ps.port }}: Max {{ ps.max_mac_count }} MACs ({{ ps.mode }}, {{ ps.status }})
+          {% endfor %}
+          
+          {% if reset_others | lower == 'yes' and ports_to_reset is defined and ports_to_reset | length > 0 %}
+          Zurückgesetzte Ports: {{ ports_to_reset | join(', ') }}
+          {% endif %}
+          
+          Inventory:  {{ 'Aktualisiert' if (update_inventory | lower == 'yes') else 'Nicht aktualisiert' }}
+          
+          ═══════════════════════════════════════════════════════════
+          
+          Verifizieren mit:
+            ssh {{ switch_user }}@{{ switch_ip }}
+            show mac address-table max-mac-count

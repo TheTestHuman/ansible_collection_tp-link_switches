@@ -2,7 +2,8 @@
 # =============================================================================
 # Default-Konfiguration: TP-Link SG3210
 # =============================================================================
-# Diese Konfiguration wird bei VLAN/LAG-Konfiguration mit Option "default" verwendet.
+# Diese Konfiguration wird bei VLAN/LAG/Port-Security Konfiguration mit 
+# Option "default" verwendet.
 #
 # Port-Layout (10 Ports):
 #   Port 1: Uplink/Trunk (tagged für alle VLANs)
@@ -50,11 +51,82 @@ lag:
     ports: [9, 10]
     lacp_mode: active
     description: "Uplink-Redundanz"
- 
-  - lag_id: 3
-    ports: [4, 5]
-    lacp_mode: active
-    description: "Uplink-Redundanz"
+
+# -----------------------------------------------------------------------------
+# Port-Security Konfiguration
+# -----------------------------------------------------------------------------
+# Struktur:
+#   - port: Port-Nummer (1-10)
+#   - max_mac_count: Maximale MAC-Adressen (0-64)
+#   - mode: dynamic | static | permanent
+#   - status: forward | drop | disable
+#   - exceed_notification: true | false
+#   - description: Optionale Beschreibung
+#
+# Modi:
+#   - dynamic:   MACs werden gelernt, bei Reboot gelöscht
+#   - static:    MACs manuell konfiguriert
+#   - permanent: MACs werden gelernt und dauerhaft gespeichert
+#
+# Status (Violation Action):
+#   - forward:  Frames weiterleiten (nur logging)
+#   - drop:     Frames verwerfen
+#   - disable:  Port deaktivieren
+#
+# HINWEIS: Ports die hier NICHT gelistet sind, können mit reset_others=yes
+#          auf Default zurückgesetzt werden.
+# -----------------------------------------------------------------------------
+port_security:
+  - port: 2
+    max_mac_count: 1
+    mode: permanent
+    status: drop
+    exceed_notification: true
+    description: "Management - strikt"
+  
+  - port: 3
+    max_mac_count: 3
+    mode: dynamic
+    status: forward
+    exceed_notification: true
+    description: "Client"
+  
+  - port: 4
+    max_mac_count: 3
+    mode: dynamic
+    status: forward
+    exceed_notification: true
+    description: "Client"
+  
+  - port: 5
+    max_mac_count: 3
+    mode: dynamic
+    status: forward
+    exceed_notification: true
+    description: "Client"
+  
+  - port: 6
+    max_mac_count: 3
+    mode: dynamic
+    status: forward
+    exceed_notification: true
+    description: "Client"
+  
+  - port: 7
+    max_mac_count: 3
+    mode: dynamic
+    status: forward
+    exceed_notification: true
+    description: "Client"
+  
+  - port: 8
+    max_mac_count: 3
+    mode: dynamic
+    status: forward
+    exceed_notification: true
+    description: "Client"
+  
+  # Ports 1, 9, 10: Keine Port-Security (Uplink/LAG)
 
 # -----------------------------------------------------------------------------
 # Port-Beschreibungen (für Dokumentation)
