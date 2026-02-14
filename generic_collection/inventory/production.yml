@@ -419,6 +419,9 @@ all:
           status: forward
           exceed_notification: true
           description: Client
+        last_backup_switch: ''
+        last_backup_local: '2026-02-14T15:29:53Z'
+        last_backup_local_file: SG3210_10-0-10-1_2026-02-14_162956.cfg
   children:
     tp_link_sg3210:
       hosts:

@@ -410,7 +410,28 @@ def create_restore_local_script(host, username, password, hostname, config_comma
         cmd_escaped = cmd.replace('"', '\\"').replace("'", "\\'")
         
         # Determine what mode this command needs
-        if cmd.startswith('vlan ') and not cmd.startswith('vlan-'):
+        if cmd.startswith('interface port-channel'):
+            # Port-channel interface - enter interface mode
+            if current_mode == "config-vlan":
+                command_section += f'''send "exit\\r"
+expect "{hostname}(config)#"
+'''
+            elif current_mode == "config-if":
+                command_section += f'''send "exit\\r"
+expect "{hostname}(config)#"
+'''
+            command_section += f'''send "{cmd_escaped}\\r"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    "{hostname}(config)#" {{}}
+    timeout {{
+        puts "WARNING: Timeout entering port-channel interface"
+    }}
+}}
+'''
+            current_mode = "config-if"
+            
+        elif cmd.startswith('vlan ') and not cmd.startswith('vlan-'):
             # VLAN command - need to be in config mode, will enter config-vlan
             if current_mode != "config":
                 command_section += f'''send "exit\\r"
@@ -445,11 +466,22 @@ expect {{
 '''
             current_mode = "config-if"
             
-        elif cmd.startswith('switchport ') or cmd.startswith('mac address-table max-mac-count'):
+        elif cmd.startswith('switchport ') or cmd.startswith('mac address-table max-mac-count') or cmd.startswith('channel-group'):
             # Interface sub-command - must be in config-if mode
             if current_mode == "config-if":
                 command_section += f'''send "{cmd_escaped}\\r"
-expect "{hostname}(config-if)#"
+expect {{
+    "{hostname}(config-if)#" {{}}
+    "already a member" {{
+        puts "WARNING: Port already in LAG"
+    }}
+    "Invalid" {{
+        puts "WARNING: Invalid command: {cmd_escaped}"
+    }}
+    timeout {{
+        puts "WARNING: Timeout after: {cmd_escaped}"
+    }}
+}}
 '''
             # Skip if not in interface mode
             
@@ -563,7 +595,13 @@ expect "{hostname}#"
 send "exit\\r"
 expect "{hostname}>"
 send "exit\\r"
-expect eof
+expect {{
+    eof {{}}
+    "Connection closed" {{}}
+    timeout {{}}
+}}
+
+puts "SUCCESS_COMPLETE"
 '''
     return script
 
@@ -650,7 +688,7 @@ def analyze_output(stdout, stderr):
         if ssh_error in combined:
             return False, error_msg
     
-    success_markers = ["SUCCESS_BACKUP_COMPLETE", "SUCCESS_RESTORE_COMPLETE", "SUCCESS_CONFIG_RETRIEVED"]
+    success_markers = ["SUCCESS_BACKUP_COMPLETE", "SUCCESS_RESTORE_COMPLETE", "SUCCESS_CONFIG_RETRIEVED", "SUCCESS_COMPLETE"]
     for marker in success_markers:
         if marker in combined:
             return True, None
@@ -861,4 +899,3 @@ def main():
 
 if __name__ == '__main__':
     main()
- 
