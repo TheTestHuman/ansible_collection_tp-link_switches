@@ -1,0 +1,104 @@
+---
+# =============================================================================
+# Default-Template für TP-Link SG3452X Switches (48 Ports + 4 SFP+)
+# =============================================================================
+#
+# Dieses Template definiert Standard-Konfigurationen für SG3452X Switches.
+# Es wird verwendet, wenn bei Playbooks "default" als Quelle gewählt wird.
+#
+# Port-Bereiche:
+#   - Ports 1-48: Gigabit Ethernet
+#   - Ports 49-52: SFP+ (10G, optional)
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# VLAN-Konfiguration
+# -----------------------------------------------------------------------------
+vlans:
+  - vlan_id: 1
+    name: "Default"
+    untagged_ports: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+                     21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
+                     39, 40, 41, 42, 43, 44]
+    tagged_ports: []
+  
+  - vlan_id: 10
+    name: "Management"
+    untagged_ports: []
+    tagged_ports: [45, 46, 47, 48]  # Uplink-Ports
+  
+  - vlan_id: 22
+    name: "Servers"
+    untagged_ports: []
+    tagged_ports: [45, 46, 47, 48]
+  
+  - vlan_id: 32
+    name: "Guest"
+    untagged_ports: []
+    tagged_ports: [45, 46, 47, 48]
+
+# -----------------------------------------------------------------------------
+# LAG-Konfiguration (Link Aggregation Groups)
+# -----------------------------------------------------------------------------
+lags:
+  - lag_id: 1
+    ports: [45, 46]  # LAG zwischen zwei Uplink-Ports
+    mode: "static"   # oder "lacp"
+  
+  # Beispiel für weitere LAGs:
+  # - lag_id: 2
+  #   ports: [47, 48]
+  #   mode: "lacp"
+
+# -----------------------------------------------------------------------------
+# Port Security Konfiguration
+# -----------------------------------------------------------------------------
+# Mögliche Modi:
+#   - disabled:        Port Security deaktiviert
+#   - secure-address:  Nur gespeicherte MAC-Adressen erlaubt
+#   - secure-mac-num:  Max. Anzahl MAC-Adressen begrenzt
+#
+# Violation Actions:
+#   - shutdown:  Port wird deaktiviert bei Verstoß
+#   - restrict:  Pakete werden gedroppt, Port bleibt aktiv
+#   - protect:   Wie restrict, aber keine Logs
+#
+port_security:
+  - port: 1
+    mode: "secure-mac-num"
+    max_macs: 5
+    violation_action: "restrict"
+  
+  - port: 2
+    mode: "secure-mac-num"
+    max_macs: 5
+    violation_action: "restrict"
+  
+  # Access Ports (3-44) mit Standard-Security
+  # - ports: [3, 4, 5, ..., 44]
+  #   mode: "secure-mac-num"
+  #   max_macs: 3
+  #   violation_action: "restrict"
+  
+  # Uplink/Trunk Ports (45-48) meist ohne Port Security
+  - port: 45
+    mode: "disabled"
+  
+  - port: 46
+    mode: "disabled"
+  
+  - port: 47
+    mode: "disabled"
+  
+  - port: 48
+    mode: "disabled"
+
+# -----------------------------------------------------------------------------
+# Port-Beschreibungen (optional, falls unterstützt)
+# -----------------------------------------------------------------------------
+# port_descriptions:
+#   1: "Workstation 1"
+#   2: "Workstation 2"
+#   45: "Uplink to Core Switch"
+#   46: "Uplink to Core Switch (LAG)"

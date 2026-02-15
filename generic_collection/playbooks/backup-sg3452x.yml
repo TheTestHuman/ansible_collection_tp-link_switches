@@ -1,0 +1,447 @@
+---
+# =============================================================================
+# Backup/Restore Configuration on TP-Link SG3452X Switches
+# =============================================================================
+#
+# Dieses Playbook sichert und stellt Switch-Konfigurationen wieder her.
+#
+# Actions:
+#   - backup_switch:  running-config → backup-config auf dem Switch speichern
+#   - backup_local:   running-config → lokale Datei herunterladen
+#   - restore_switch: backup-config → startup-config wiederherstellen
+#   - restore_local:  lokale Datei → auf Switch anwenden
+#
+# Backup-Verzeichnis: tp_link_sg3452x/backups/
+#
+# Usage:
+#   cd ~/ansible_collection_tp-link_switches/generic_collection/
+#   ansible-playbook playbooks/backup-sg3452x.yml
+#
+# =============================================================================
+
+- name: Backup/Restore Configuration on TP-Link SG3452X
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  
+  vars_prompt:
+    - name: target_switch
+      prompt: "Switch-Name aus Inventory (z.B. sg3452x-office)"
+      private: false
+    
+    - name: backup_action
+      prompt: "Action? (backup_switch / backup_local / restore_switch / restore_local)"
+      default: "backup_local"
+      private: false
+    
+    - name: update_inventory
+      prompt: "Inventory nach Backup aktualisieren? (yes/no)"
+      default: "yes"
+      private: false
+
+  vars:
+  
+  environment:
+    ANSIBLE_LIBRARY: "{{ playbook_dir }}/../../tp_link_sg3452x/library"
+    inventory_file: "{{ playbook_dir }}/../inventory/production.yml"
+    vault_file: "{{ playbook_dir }}/../inventory/vault.yml"
+    backup_dir: "{{ playbook_dir }}/../../tp_link_sg3452x/backups"
+    ssh_check_timeout: 5
+
+  tasks:
+    # =========================================================================
+    # SCHRITT 1: Switch-Daten aus Inventory laden
+    # =========================================================================
+    
+    - name: "INIT: Lade Inventory"
+      include_vars:
+        file: "{{ inventory_file }}"
+        name: full_inventory
+    
+    - name: "INIT: Lade Vault"
+      include_vars:
+        file: "{{ vault_file }}"
+        name: vault_data
+      ignore_errors: yes
+    
+    - name: "INIT: Prüfe ob Switch existiert"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Switch '{{ target_switch }}' nicht im Inventory!
+          ═══════════════════════════════════════════════════════════
+          
+          Verfügbare SG3452X Switches:
+          {% for host, data in full_inventory.all.hosts.items() %}
+          {% if data.switch_type | default('') == 'tp_link_sg3452x' %}
+            - {{ host }} ({{ data.ansible_host }})
+          {% endif %}
+          {% endfor %}
+          
+          ═══════════════════════════════════════════════════════════
+      when: target_switch not in full_inventory.all.hosts
+    
+    - name: "INIT: Extrahiere Switch-Daten"
+      set_fact:
+        switch_data: "{{ full_inventory.all.hosts[target_switch] }}"
+        switch_ip: "{{ full_inventory.all.hosts[target_switch].ansible_host }}"
+        switch_hostname: "SG3452X"
+        switch_user: "{{ full_inventory.all.vars.ansible_user | default('admin') }}"
+        switch_password: "{{ vault_data.vault_passwords[target_switch] | default(vault_data.vault_default_password) | default('admin') }}"
+    
+    - name: "INIT: Zeige Switch-Info"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          BACKUP/RESTORE - {{ target_switch }}
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }}
+          IP:         {{ switch_ip }}
+          Hostname:   {{ switch_hostname }}
+          
+          Action:     {{ backup_action }}
+          Backup-Dir: {{ backup_dir }}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 2: Restore-Datei abfragen (nur bei restore_local)
+    # =========================================================================
+    
+    - name: "RESTORE: Liste verfügbare Backups"
+      find:
+        paths: "{{ backup_dir }}"
+        patterns: "*.cfg"
+        file_type: file
+      register: available_backups
+      when: backup_action == "restore_local"
+    
+    - name: "RESTORE: Zeige verfügbare Backups"
+      debug:
+        msg: |
+          Verfügbare Backup-Dateien in {{ backup_dir }}:
+          {% for file in available_backups.files | sort(attribute='mtime', reverse=true) %}
+            - {{ file.path | basename }} ({{ '%Y-%m-%d %H:%M' | strftime(file.mtime) }})
+          {% endfor %}
+      when: 
+        - backup_action == "restore_local"
+        - available_backups.files | length > 0
+    
+    - name: "RESTORE: Keine Backups vorhanden"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Keine Backup-Dateien gefunden!
+          ═══════════════════════════════════════════════════════════
+          
+          Verzeichnis: {{ backup_dir }}
+          
+          Bitte zuerst ein Backup erstellen mit:
+            Action: backup_local
+          
+          ═══════════════════════════════════════════════════════════
+      when: 
+        - backup_action == "restore_local"
+        - available_backups.files | length == 0
+    
+    - name: "RESTORE: Frage Backup-Datei ab"
+      pause:
+        prompt: "Backup-Datei (Dateiname aus Liste oben)"
+      register: restore_file_input
+      when: backup_action == "restore_local"
+    
+    - name: "RESTORE: Setze Restore-Pfad"
+      set_fact:
+        restore_file_path: "{{ backup_dir }}/{{ restore_file_input.user_input }}"
+      when: backup_action == "restore_local"
+    
+    - name: "RESTORE: Prüfe ob Datei existiert"
+      stat:
+        path: "{{ restore_file_path }}"
+      register: restore_file_stat
+      when: backup_action == "restore_local"
+    
+    - name: "RESTORE: Fehler wenn Datei nicht existiert"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Backup-Datei nicht gefunden!
+          ═══════════════════════════════════════════════════════════
+          
+          Datei: {{ restore_file_path }}
+          
+          ═══════════════════════════════════════════════════════════
+      when: 
+        - backup_action == "restore_local"
+        - not restore_file_stat.stat.exists
+
+    # =========================================================================
+    # SCHRITT 3: Konnektivität prüfen
+    # =========================================================================
+    
+    - name: "CHECK: SSH-Verbindung prüfen"
+      wait_for:
+        host: "{{ switch_ip }}"
+        port: 22
+        timeout: "{{ ssh_check_timeout }}"
+      register: ssh_check
+      ignore_errors: yes
+    
+    - name: "CHECK: Fehler wenn nicht erreichbar"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Switch nicht erreichbar!
+          ═══════════════════════════════════════════════════════════
+          
+          Switch '{{ target_switch }}' ({{ switch_ip }}) ist nicht per SSH erreichbar.
+          
+          Bitte prüfen:
+          1. Switch ist eingeschaltet
+          2. Netzwerkverbindung besteht
+          3. SSH ist aktiviert
+          4. IP-Adresse stimmt
+          
+          ═══════════════════════════════════════════════════════════
+      when: ssh_check is failed
+
+    # =========================================================================
+    # SCHRITT 4: Backup-Verzeichnis erstellen (für backup_local)
+    # =========================================================================
+    
+    - name: "BACKUP: Erstelle Backup-Verzeichnis"
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+      when: backup_action == "backup_local"
+
+    # =========================================================================
+    # SCHRITT 5: Action ausführen
+    # =========================================================================
+    
+    # --- BACKUP_SWITCH ---
+    - name: "ACTION: Backup auf Switch (running → backup-config)"
+      tp_link_config_backup:
+        host: "{{ switch_ip }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_password }}"
+        hostname: "{{ switch_hostname }}"
+        action: backup_switch
+      register: result_backup_switch
+      when: backup_action == "backup_switch"
+    
+    # --- BACKUP_LOCAL ---
+    - name: "ACTION: Backup lokal herunterladen"
+      tp_link_config_backup:
+        host: "{{ switch_ip }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_password }}"
+        hostname: "{{ switch_hostname }}"
+        action: backup_local
+        backup_dir: "{{ backup_dir }}"
+      register: result_backup_local
+      when: backup_action == "backup_local"
+    
+    # --- RESTORE_SWITCH ---
+    - name: "ACTION: Restore auf Switch (backup-config → startup-config)"
+      tp_link_config_backup:
+        host: "{{ switch_ip }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_password }}"
+        hostname: "{{ switch_hostname }}"
+        action: restore_switch
+      register: result_restore_switch
+      when: backup_action == "restore_switch"
+    
+    # --- RESTORE_LOCAL ---
+    - name: "ACTION: Restore aus lokaler Datei"
+      tp_link_config_backup:
+        host: "{{ switch_ip }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_password }}"
+        hostname: "{{ switch_hostname }}"
+        action: restore_local
+        config_file: "{{ restore_file_path }}"
+      register: result_restore_local
+      when: backup_action == "restore_local"
+
+    # =========================================================================
+    # SCHRITT 6: Ergebnis anzeigen
+    # =========================================================================
+    
+    - name: "RESULT: Backup Switch"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ BACKUP AUF SWITCH ERSTELLT
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }} ({{ switch_ip }})
+          Action:     running-config → backup-config
+          
+          Die aktuelle Konfiguration wurde als Backup auf dem Switch
+          gespeichert. Restore mit Action: restore_switch
+          
+          ═══════════════════════════════════════════════════════════
+      when: 
+        - backup_action == "backup_switch"
+        - result_backup_switch is defined
+        - result_backup_switch is succeeded
+    
+    - name: "RESULT: Backup Local"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ BACKUP LOKAL GESPEICHERT
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }} ({{ switch_ip }})
+          Datei:      {{ result_backup_local.backup_path }}
+          Größe:      {{ result_backup_local.backup_size }} Bytes
+          
+          ═══════════════════════════════════════════════════════════
+      when: 
+        - backup_action == "backup_local"
+        - result_backup_local is defined
+        - result_backup_local is succeeded
+    
+    - name: "RESULT: Restore Switch"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ RESTORE AUS SWITCH-BACKUP
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }} ({{ switch_ip }})
+          Action:     backup-config → startup-config
+          
+          ⚠ WICHTIG: Switch neu starten um Konfiguration zu laden!
+          
+          ═══════════════════════════════════════════════════════════
+      when: 
+        - backup_action == "restore_switch"
+        - result_restore_switch is defined
+        - result_restore_switch is succeeded
+    
+    - name: "RESULT: Restore Local"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ RESTORE AUS LOKALER DATEI
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }} ({{ switch_ip }})
+          Datei:      {{ restore_file_path }}
+          Commands:   {{ result_restore_local.commands_applied }}
+          
+          ⚠ WICHTIG: Switch neu starten um Konfiguration vollständig zu laden!
+          
+          ═══════════════════════════════════════════════════════════
+      when: 
+        - backup_action == "restore_local"
+        - result_restore_local is defined
+        - result_restore_local is succeeded
+
+    # =========================================================================
+    # SCHRITT 7: Inventory aktualisieren
+    # =========================================================================
+    
+    - name: "INVENTORY: Setze Timestamp"
+      set_fact:
+        current_timestamp: "{{ ansible_date_time.iso8601 }}"
+    
+    - name: "INVENTORY: Aktualisiere last_backup_switch"
+      inventory_manager:
+        inventory_path: "{{ inventory_file }}"
+        switch_name: "{{ target_switch }}"
+        switch_data:
+          ansible_host: "{{ switch_ip }}"
+          switch_type: "{{ switch_data.switch_type }}"
+          switch_model: "{{ switch_data.switch_model | default('TL-SG3452X') }}"
+          switch_location: "{{ switch_data.switch_location | default('Unknown') }}"
+          switch_role: "{{ switch_data.switch_role | default('access') }}"
+          connection: "{{ switch_data.connection | default({'protocol': 'ssh', 'port': 22}) }}"
+          cli: "{{ switch_data.cli | default({'hostname': 'SG3452X', 'enable_command': 'enable'}) }}"
+          ownership: "{{ switch_data.ownership | default({}) }}"
+          config:
+            vlans: "{{ switch_data.config.vlans | default([]) }}"
+            lag: "{{ switch_data.config.lag | default([]) }}"
+            ports: "{{ switch_data.config.ports | default({}) }}"
+            port_security: "{{ switch_data.config.port_security | default([]) }}"
+            last_backup_switch: "{{ current_timestamp }}"
+            last_backup_local: "{{ switch_data.config.last_backup_local | default('') }}"
+        action: update
+        force: true
+      register: inventory_result
+      when: 
+        - update_inventory | lower == "yes"
+        - backup_action == "backup_switch"
+    
+    - name: "INVENTORY: Aktualisiere last_backup_local"
+      inventory_manager:
+        inventory_path: "{{ inventory_file }}"
+        switch_name: "{{ target_switch }}"
+        switch_data:
+          ansible_host: "{{ switch_ip }}"
+          switch_type: "{{ switch_data.switch_type }}"
+          switch_model: "{{ switch_data.switch_model | default('TL-SG3452X') }}"
+          switch_location: "{{ switch_data.switch_location | default('Unknown') }}"
+          switch_role: "{{ switch_data.switch_role | default('access') }}"
+          connection: "{{ switch_data.connection | default({'protocol': 'ssh', 'port': 22}) }}"
+          cli: "{{ switch_data.cli | default({'hostname': 'SG3452X', 'enable_command': 'enable'}) }}"
+          ownership: "{{ switch_data.ownership | default({}) }}"
+          config:
+            vlans: "{{ switch_data.config.vlans | default([]) }}"
+            lag: "{{ switch_data.config.lag | default([]) }}"
+            ports: "{{ switch_data.config.ports | default({}) }}"
+            port_security: "{{ switch_data.config.port_security | default([]) }}"
+            last_backup_switch: "{{ switch_data.config.last_backup_switch | default('') }}"
+            last_backup_local: "{{ current_timestamp }}"
+            last_backup_local_file: "{{ result_backup_local.backup_path | basename }}"
+        action: update
+        force: true
+      register: inventory_result
+      when: 
+        - update_inventory | lower == "yes"
+        - backup_action == "backup_local"
+    
+    - name: "INVENTORY: Zeige Ergebnis"
+      debug:
+        msg: "✓ Inventory aktualisiert: {{ inventory_result.message | default('OK') }}"
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_result is defined
+        - inventory_result.message is defined
+
+    # =========================================================================
+    # ZUSAMMENFASSUNG
+    # =========================================================================
+    
+    - name: "COMPLETE: Zusammenfassung"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ {{ backup_action | upper }} ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }} ({{ switch_ip }})
+          Action:     {{ backup_action }}
+          
+          {% if backup_action == 'backup_local' %}
+          Backup:     {{ result_backup_local.backup_path }}
+          {% endif %}
+          {% if backup_action == 'restore_local' %}
+          Restored:   {{ restore_file_path }}
+          {% endif %}
+          
+          Inventory:  {{ 'Aktualisiert' if (update_inventory | lower == 'yes') else 'Nicht aktualisiert' }}
+          
+          ═══════════════════════════════════════════════════════════
+          
+          Verifizieren mit:
+            ssh {{ switch_user }}@{{ switch_ip }}
+            show running-config
+          
+          ═══════════════════════════════════════════════════════════

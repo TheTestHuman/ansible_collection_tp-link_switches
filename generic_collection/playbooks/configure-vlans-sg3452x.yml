@@ -1,0 +1,299 @@
+---
+# =============================================================================
+# Configure VLANs on TP-Link SG3452X Switches
+# =============================================================================
+#
+# Dieses Playbook konfiguriert VLANs auf TP-Link SG3452X Switches mit
+# verschiedenen Quellen und Inventory-Integration.
+#
+# Quellen für VLANs:
+#   - inventory: VLANs aus dem Inventory-Eintrag des Switches (config.vlans)
+#   - default:   VLANs aus dem Default-Template (templates/default_sg3452x.yml)
+#   - manual:    VLANs aus der manual_vlans Variable im Playbook
+#
+# Modi:
+#   - add:     Nur neue VLANs hinzufügen
+#   - replace: Alle nicht-geschützten VLANs löschen und neue erstellen
+#
+# Usage:
+#   cd ~/ansible_collection_tp-link_switches/generic_collection/
+#   ansible-playbook playbooks/configure-vlans-sg3452x.yml
+#
+# =============================================================================
+
+- name: Configure VLANs on TP-Link SG3452X
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  
+  vars_prompt:
+    - name: target_switch
+      prompt: "Switch-Name aus Inventory (z.B. sg3452x-office)"
+      private: false
+    
+    - name: vlan_source
+      prompt: "VLAN-Quelle? (inventory = aus Inventory / default = Standard-Template / manual = manuell)"
+      default: "inventory"
+      private: false
+    
+    - name: vlan_mode
+      prompt: "Modus? (add = nur hinzufügen / replace = ersetzen)"
+      default: "add"
+      private: false
+    
+    - name: update_inventory
+      prompt: "Inventory nach Konfiguration aktualisieren? (yes/no)"
+      default: "yes"
+      private: false
+
+  vars:
+    inventory_file: "{{ playbook_dir }}/../inventory/production.yml"
+    vault_file: "{{ playbook_dir }}/../inventory/vault.yml"
+    protected_vlans: [1]
+    ssh_check_timeout: 5
+    
+    # Manuelle VLAN-Definition wird aus separater Datei geladen
+    manual_vlans_file: "../templates/manual_sg3452x.yml"
+    
+    # Library-Pfad für SG3452X-Module
+    ansible_python_module_rlimit_nofile: 4096
+
+  environment:
+    ANSIBLE_LIBRARY: "{{ playbook_dir }}/../../tp_link_sg3452x/library"
+
+  tasks:
+    # =========================================================================
+    # SCHRITT 1: Switch-Daten aus Inventory laden
+    # =========================================================================
+    
+    - name: "INIT: Lade Inventory"
+      include_vars:
+        file: "{{ inventory_file }}"
+        name: full_inventory
+    
+    - name: "INIT: Lade Vault"
+      include_vars:
+        file: "{{ vault_file }}"
+        name: vault_data
+      ignore_errors: yes
+    
+    - name: "INIT: Prüfe ob Switch existiert"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Switch '{{ target_switch }}' nicht im Inventory!
+          ═══════════════════════════════════════════════════════════
+          
+          Verfügbare SG3452X Switches:
+          {% for host, data in full_inventory.all.hosts.items() %}
+          {% if data.switch_type | default('') == 'tp_link_sg3452x' %}
+            - {{ host }} ({{ data.ansible_host }})
+          {% endif %}
+          {% endfor %}
+          
+          ═══════════════════════════════════════════════════════════
+      when: target_switch not in full_inventory.all.hosts
+    
+    - name: "INIT: Extrahiere Switch-Daten"
+      set_fact:
+        switch_data: "{{ full_inventory.all.hosts[target_switch] }}"
+        switch_ip: "{{ full_inventory.all.hosts[target_switch].ansible_host }}"
+        switch_hostname: "SG3452X"
+        switch_user: "{{ full_inventory.all.vars.ansible_user | default('admin') }}"
+        switch_password: "{{ vault_data.vault_passwords[target_switch] | default(vault_data.vault_default_password) | default('admin') }}"
+    
+    - name: "INIT: Zeige Switch-Info"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          VLAN-KONFIGURATION - {{ target_switch }}
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }}
+          IP:         {{ switch_ip }}
+          Hostname:   {{ switch_hostname }}
+          
+          Quelle:     {{ vlan_source }}
+          Modus:      {{ vlan_mode }}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 2: VLANs aus gewählter Quelle laden
+    # =========================================================================
+    
+    - name: "VLANS: Lade aus Inventory"
+      set_fact:
+        target_vlans: "{{ switch_data.config.vlans | default([]) }}"
+      when: vlan_source == "inventory"
+    
+    - name: "VLANS: Lade Default-Template"
+      block:
+        - name: Lade Template-Datei
+          include_vars:
+            file: "../templates/default_sg3452x.yml"
+            name: default_config
+        - name: Setze VLANs aus Template
+          set_fact:
+            target_vlans: "{{ default_config.vlans | default([]) }}"
+      when: vlan_source == "default"
+    
+    - name: "VLANS: Lade manuelle Definition"
+      block:
+        - name: Lade manuelle VLAN-Datei
+          include_vars:
+            file: "{{ manual_vlans_file }}"
+            name: manual_config
+        - name: Setze VLANs aus manueller Datei
+          set_fact:
+            target_vlans: "{{ manual_config.vlans | default([]) }}"
+      when: vlan_source == "manual"
+    
+    - name: "VLANS: Prüfe ob VLANs vorhanden"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Keine VLANs gefunden!
+          ═══════════════════════════════════════════════════════════
+          
+          Quelle '{{ vlan_source }}' enthält keine VLAN-Definition.
+          
+          {% if vlan_source == 'inventory' %}
+          Der Switch '{{ target_switch }}' hat keine config.vlans im Inventory.
+          Bitte zuerst VLANs im Inventory definieren oder 'default' als Quelle wählen.
+          {% endif %}
+          
+          ═══════════════════════════════════════════════════════════
+      when: target_vlans | length == 0
+    
+    - name: "VLANS: Zeige zu konfigurierende VLANs"
+      debug:
+        msg: |
+          Zu konfigurierende VLANs ({{ target_vlans | length }}):
+          {% for vlan in target_vlans %}
+            VLAN {{ vlan.vlan_id }}: {{ vlan.name }}
+              Tagged:   {{ vlan.tagged_ports | default([]) | join(', ') | default('keine') }}
+              Untagged: {{ vlan.untagged_ports | default([]) | join(', ') | default('keine') }}
+          {% endfor %}
+
+    # =========================================================================
+    # SCHRITT 3: Konnektivität prüfen
+    # =========================================================================
+    
+    - name: "CHECK: SSH-Verbindung prüfen"
+      wait_for:
+        host: "{{ switch_ip }}"
+        port: 22
+        timeout: "{{ ssh_check_timeout }}"
+      register: ssh_check
+      ignore_errors: yes
+    
+    - name: "CHECK: Fehler wenn nicht erreichbar"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Switch nicht erreichbar!
+          ═══════════════════════════════════════════════════════════
+          
+          Switch '{{ target_switch }}' ({{ switch_ip }}) ist nicht per SSH erreichbar.
+          
+          Bitte prüfen:
+          1. Switch ist eingeschaltet
+          2. Netzwerkverbindung besteht
+          3. SSH ist aktiviert
+          4. IP-Adresse stimmt
+          
+          ═══════════════════════════════════════════════════════════
+      when: ssh_check is failed
+
+    # =========================================================================
+    # SCHRITT 4: VLANs konfigurieren
+    # =========================================================================
+    
+    - name: "CONFIG: VLANs konfigurieren (Mode: {{ vlan_mode }})"
+      tp_link_batch_vlan_expect:
+        host: "{{ switch_ip }}"
+        username: "{{ switch_user }}"
+        password: "{{ switch_password }}"
+        hostname: "{{ switch_hostname }}"
+        vlans: "{{ target_vlans }}"
+        mode: "{{ vlan_mode }}"
+        protected_vlans: "{{ protected_vlans }}"
+      register: vlan_result
+    
+    - name: "CONFIG: Zeige Ergebnis"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ VLAN-KONFIGURATION ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:          {{ target_switch }}
+          Modus:           {{ vlan_mode }}
+          VLANs erstellt:  {{ vlan_result.vlans_created }}
+          VLANs gelöscht:  {{ vlan_result.vlans_deleted | default(0) }}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 5: Inventory aktualisieren
+    # =========================================================================
+    
+    - name: "INVENTORY: Aktualisiere config.vlans"
+      inventory_manager:
+        inventory_path: "{{ inventory_file }}"
+        switch_name: "{{ target_switch }}"
+        switch_data:
+          ansible_host: "{{ switch_ip }}"
+          switch_type: "{{ switch_data.switch_type }}"
+          switch_model: "{{ switch_data.switch_model | default('TL-SG3452X') }}"
+          switch_location: "{{ switch_data.switch_location | default('Unknown') }}"
+          switch_role: "{{ switch_data.switch_role | default('access') }}"
+          connection: "{{ switch_data.connection | default({'protocol': 'ssh', 'port': 22}) }}"
+          cli: "{{ switch_data.cli | default({'hostname': 'SG3452X', 'enable_command': 'enable'}) }}"
+          ownership: "{{ switch_data.ownership | default({}) }}"
+          config:
+            vlans: "{{ target_vlans }}"
+            ports: "{{ switch_data.config.ports | default({}) }}"
+            lag: "{{ switch_data.config.lag | default({}) }}"
+        action: update
+        force: true
+      register: inventory_result
+      when: update_inventory | lower == "yes"
+    
+    - name: "INVENTORY: Zeige Ergebnis"
+      debug:
+        msg: "✓ Inventory aktualisiert: {{ inventory_result.message }}"
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_result is defined
+
+    # =========================================================================
+    # ZUSAMMENFASSUNG
+    # =========================================================================
+    
+    - name: "COMPLETE: Zusammenfassung"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ VLAN-KONFIGURATION ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }} ({{ switch_ip }})
+          Quelle:     {{ vlan_source }}
+          Modus:      {{ vlan_mode }}
+          
+          Konfigurierte VLANs:
+          {% for vlan in target_vlans %}
+            VLAN {{ vlan.vlan_id }}: {{ vlan.name }}
+          {% endfor %}
+          
+          Inventory:  {{ 'Aktualisiert' if (update_inventory | lower == 'yes') else 'Nicht aktualisiert' }}
+          
+          ═══════════════════════════════════════════════════════════
+          
+          Verifizieren mit:
+            ssh {{ switch_user }}@{{ switch_ip }}
+            show vlan
+          
+          ═══════════════════════════════════════════════════════════
