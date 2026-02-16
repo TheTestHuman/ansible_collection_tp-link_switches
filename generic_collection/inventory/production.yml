@@ -95,6 +95,39 @@ all:
           - 48
         ports: {}
         lag: {}
+    sg108e-test1:
+      ansible_host: 10.0.10.4
+      switch_type: tp_link_sg108e
+      switch_model: TL-SG108E
+      switch_location: egal
+      switch_role: access
+      connection:
+        protocol: udp
+        port: 29808
+        mac_address: 8C:86:DD:AD:91:82
+      ownership:
+        taken: true
+        taken_at: null
+        mac_address: 8C:86:DD:AD:91:82
+      config:
+        vlans:
+        - vlan_id: 1
+          name: Default
+          untagged_ports:
+          - 1
+          - 2
+          tagged_ports: []
+        - vlan_id: 30
+          name: Clients
+          tagged_ports:
+          - 1
+          untagged_ports:
+          - 3
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
   children:
     tp_link_sg3210_switches:
       hosts: {}
@@ -105,3 +138,6 @@ all:
     tp_link_sg3452x:
       hosts:
         sg3452x-test9: null
+    tp_link_sg108e:
+      hosts:
+        sg108e-test1: null

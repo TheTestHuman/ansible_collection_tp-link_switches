@@ -79,11 +79,6 @@ options:
             untagged_ports:
                 description: Ports that should be untagged for this VLAN
                 type: list
-    ports:
-        description: Port configuration (optional)
-        required: false
-        type: list
-        elements: dict
     mode:
         description: Operation mode
         choices: ['add', 'replace']
@@ -114,6 +109,7 @@ EXAMPLES = '''
         name: "Clients"
         tagged_ports: [1]
         untagged_ports: [3, 4, 5, 6, 7, 8]
+    mode: replace
 '''
 
 
@@ -476,6 +472,19 @@ class SG108ESwitchClient:
             )]
             _header, _payload = self._network.set(self._username, self._password, set_payload)
 
+    def delete_vlan(self, vlan_id):
+        """Delete a VLAN by setting it with empty member ports"""
+        set_payload = [(
+            Protocol.get_id('vlan'),
+            Protocol.set_vlan(
+                vlan_id,
+                0,  # No member ports (bitmask = 0)
+                0,  # No tagged ports
+                ''  # Empty name
+            )
+        )]
+        _header, _payload = self._network.set(self._username, self._password, set_payload)
+
     def get_pvids(self):
         """Get port PVIDs"""
         _header, payload = self._network.query(Protocol.GET, [(Protocol.get_id('pvid'), b'')])
@@ -598,6 +607,11 @@ class SG108EVlanConfig:
         changed = vlan_enabled_changed or bool(vlans_to_create) or bool(vlans_to_update) or bool(vlans_to_delete)
 
         if not dry_run:
+            # Delete VLANs first (by setting them with empty member ports)
+            # This removes ports from old VLANs before assigning to new ones
+            for vlan_id in vlans_to_delete:
+                self._client.delete_vlan(vlan_id)
+
             # Create/update VLANs
             all_vlans_to_set = vlans_to_create + vlans_to_update
             if all_vlans_to_set:
@@ -610,9 +624,6 @@ class SG108EVlanConfig:
                     pvids_to_set.append({'port': port, 'pvid': vlan['vlan_id']})
             if pvids_to_set:
                 self._client.set_pvids(pvids_to_set)
-
-            # Delete VLANs (by setting them with no ports - effectively removes them)
-            # Note: SG108E doesn't have explicit delete, we just don't include them
 
         return {
             'changed': changed,
@@ -661,10 +672,8 @@ def run_module():
         username=dict(type='str', required=False, default='admin'),
         password=dict(type='str', required=True, no_log=True),
         vlans=dict(type='list', required=True, elements='dict'),
-        ports=dict(type='list', required=False, elements='dict'),
         mode=dict(type='str', required=False, default='add', choices=['add', 'replace']),
         protected_vlans=dict(type='list', required=False, default=[1], elements='int'),
-        hostname=dict(type='str', required=False, default='SG108E'),
     )
 
     module = AnsibleModule(argument_spec=module_args, supports_check_mode=True)
