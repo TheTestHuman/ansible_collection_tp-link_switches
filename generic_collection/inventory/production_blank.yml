@@ -8,7 +8,7 @@
 # Switch-Typen:
 #   - tp_link_sg3210: TP-Link SG3210 (SSH/Telnet)
 #   - tp_link_sg108e: TP-Link SG108E Easy Smart (UDP)
-#   - cisco_2900xl: Cisco Catalyst 2900XL (Telnet)
+#   - cisco_c2924: Cisco Catalyst C2924 (Telnet)
 # =============================================================================
 
 all:
@@ -58,17 +58,17 @@ all:
     #   config:
     #     vlans: []
     #
-    # Beispiel Cisco 2900XL:
-    # 2900xl-lab:
+    # Beispiel Cisco C2924:
+    # c2924-lab:
     #   ansible_host: 10.0.20.1
-    #   switch_type: cisco_2900xl
+    #   switch_type: cisco_c2924
     #   switch_model: WS-C2924C-XL-EN
     #   switch_location: Lab
     #   switch_role: test
     #   connection:
     #     protocol: telnet
     #     port: 23
-    #     enable_password: "{{ vault_passwords['2900xl-lab'] }}"
+    #     enable_password: "{{ vault_passwords['c2924-lab'] }}"
     #   cli:
     #     hostname: SWITCH
     #     enable_command: enable
@@ -84,7 +84,7 @@ all:
     tp_link_sg108e:
       hosts: {}
     
-    cisco_2900xl:
+    cisco_c2924:
       hosts: {}
     
     core_switches:

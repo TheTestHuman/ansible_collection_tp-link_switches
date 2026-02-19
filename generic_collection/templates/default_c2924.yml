@@ -1,0 +1,37 @@
+---
+# =============================================================================
+# Default-Konfiguration: Cisco Catalyst C2924
+# =============================================================================
+# Diese Konfiguration wird bei configure-vlans-cisco.yml verwendet.
+# Cisco C2924 hat 24 FastEthernet Ports (Fa0/1 - Fa0/24).
+#
+# Port-Layout (24 Ports):
+#   Port 1: Uplink/Trunk (tagged für alle VLANs)
+#   Port 2: Management (untagged VLAN 10)
+#   Port 3-22: Clients (untagged VLAN 20)
+#   Port 23-24: Reserved (untagged VLAN 1)
+#
+# WICHTIG: Das Cisco-Modul erwartet:
+#   - vlan_id (wie TP-Link)
+#   - tagged_ports: Liste von Portnummern (werden Trunk-Ports)
+#   - untagged_ports: Liste von Portnummern (werden Access-Ports)
+# =============================================================================
+
+vlans:
+  - vlan_id: 1
+    name: "default"
+    tagged_ports: [1, 2]
+    untagged_ports: [23, 24]
+  
+  - vlan_id: 10
+    name: "Management"
+    tagged_ports: [1]
+    untagged_ports: [2]
+  
+  - vlan_id: 20
+    name: "Clients"
+    tagged_ports: [1]
+    untagged_ports: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+
+# Cisco C2924 unterstützt kein LACP (nur PAgP)
+lag: {}

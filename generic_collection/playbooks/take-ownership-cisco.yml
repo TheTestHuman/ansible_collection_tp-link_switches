@@ -1,6 +1,6 @@
 ---
 # =============================================================================
-# Cisco 2900 XL - Take Ownership
+# Cisco C2924 - Take Ownership
 # =============================================================================
 # Registriert einen Cisco Switch und fügt ihn zum Inventory hinzu.
 # 
@@ -12,7 +12,7 @@
 #   ansible-playbook playbooks/take-ownership-cisco.yml
 # =============================================================================
 
-- name: Cisco 2900 XL - Take Ownership
+- name: Cisco C2924 - Take Ownership
   hosts: localhost
   connection: local
   gather_facts: true
@@ -47,13 +47,13 @@
 
   vars:
     inventory_file: "{{ playbook_dir }}/../inventory/production.yml"
-    switch_name: "2900xl-{{ switch_suffix }}"
+    switch_name: "c2924-{{ switch_suffix }}"
 
   tasks:
     # =========================================================================
     # SCHRITT 1: Take Ownership - Hardware-Info auslesen
     # =========================================================================
-    - name: Take Ownership - Cisco 2900 XL
+    - name: Take Ownership - Cisco C2924
       cisco_take_ownership:
         host: "{{ switch_ip }}"
         password: "{{ switch_password }}"
@@ -85,7 +85,7 @@
     # =========================================================================
     - name: Lade Default-Konfiguration
       include_vars:
-        file: "../templates/default_2900xl.yml"
+        file: "../templates/default_c2924.yml"
         name: default_config
       when: config_mode == "default"
     
@@ -138,7 +138,7 @@
         inventory_path: "{{ inventory_file }}"
         switch_name: "{{ switch_name }}"
         ansible_host: "{{ switch_ip }}"
-        switch_type: "cisco_2900xl"
+        switch_type: "cisco_c2924"
         switch_model: "{{ ownership_result.hardware_info.model | default('WS-C2924C-XL') }}"
         switch_location: "{{ switch_location }}"
         switch_role: "access"

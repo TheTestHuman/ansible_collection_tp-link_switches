@@ -1,0 +1,262 @@
+---
+# =============================================================================
+# Configure VLANs on Cisco Catalyst C2924
+# =============================================================================
+#
+# Dieses Playbook konfiguriert VLANs auf Cisco C2924 Switches.
+#
+# Quellen für VLANs:
+#   - inventory: VLANs aus dem Inventory-Eintrag des Switches (config.vlans)
+#   - default:   VLANs aus dem Default-Template (templates/default_c2924.yml)
+#   - manual:    VLANs werden im Playbook definiert
+#
+# Usage:
+#   cd ~/ansible_collection_tp-link_switches/generic_collection/
+#   ansible-playbook playbooks/configure-vlans-cisco.yml
+#
+# =============================================================================
+
+- name: Configure VLANs on Cisco C2924
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  
+  vars_prompt:
+    - name: target_switch
+      prompt: "Switch-Name aus Inventory (z.B. c2924-lab)"
+      private: false
+    
+    - name: vlan_source
+      prompt: "VLAN-Quelle? (inventory / default / manual)"
+      default: "default"
+      private: false
+    
+    - name: vlan_state
+      prompt: "State? (present = erstellen / absent = löschen)"
+      default: "present"
+      private: false
+    
+    - name: update_inventory
+      prompt: "Inventory nach Konfiguration aktualisieren? (yes/no)"
+      default: "yes"
+      private: false
+
+  vars:
+    inventory_file: "{{ playbook_dir }}/../inventory/production.yml"
+    vault_file: "{{ playbook_dir }}/../inventory/vault.yml"
+    
+    # Manuelle VLAN-Definition (nur wenn vlan_source=manual)
+    manual_vlans:
+      - id: 10
+        name: "Management"
+      - id: 20
+        name: "Clients"
+      - id: 30
+        name: "Servers"
+
+  tasks:
+    # =========================================================================
+    # SCHRITT 1: Switch-Daten aus Inventory laden
+    # =========================================================================
+    
+    - name: "INIT: Lade Inventory"
+      include_vars:
+        file: "{{ inventory_file }}"
+        name: full_inventory
+    
+    - name: "INIT: Lade Vault"
+      include_vars:
+        file: "{{ vault_file }}"
+        name: vault_data
+      ignore_errors: yes
+    
+    - name: "INIT: Prüfe ob Switch existiert"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Switch '{{ target_switch }}' nicht im Inventory!
+          ═══════════════════════════════════════════════════════════
+          
+          Verfügbare Cisco Switches:
+          {% for host, data in full_inventory.all.hosts.items() %}
+          {% if data.switch_type | default('') == 'cisco_c2924' %}
+            - {{ host }} ({{ data.ansible_host }})
+          {% endif %}
+          {% endfor %}
+          
+          ═══════════════════════════════════════════════════════════
+      when: target_switch not in full_inventory.all.hosts
+    
+    - name: "INIT: Extrahiere Switch-Daten"
+      set_fact:
+        switch_data: "{{ full_inventory.all.hosts[target_switch] }}"
+        switch_ip: "{{ full_inventory.all.hosts[target_switch].ansible_host }}"
+        switch_password: "{{ vault_data.vault_passwords[target_switch] | default(vault_data.vault_default_password) | default('cisco') }}"
+    
+    - name: "INIT: Zeige Switch-Info"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          VLAN-KONFIGURATION - {{ target_switch }}
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }}
+          IP:         {{ switch_ip }}
+          Modell:     {{ switch_data.switch_model | default('Cisco C2924') }}
+          
+          Quelle:     {{ vlan_source }}
+          State:      {{ vlan_state }}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 2: VLANs aus gewählter Quelle laden
+    # =========================================================================
+    
+    - name: "VLANS: Lade aus Inventory"
+      set_fact:
+        target_vlans: "{{ switch_data.config.vlans | default([]) }}"
+      when: vlan_source == "inventory"
+    
+    - name: "VLANS: Lade Default-Template"
+      block:
+        - name: Lade Template-Datei
+          include_vars:
+            file: "../templates/default_c2924.yml"
+            name: default_config
+        - name: Setze VLANs aus Template
+          set_fact:
+            target_vlans: "{{ default_config.vlans | default([]) }}"
+      when: vlan_source == "default"
+    
+    - name: "VLANS: Nutze manuelle Definition"
+      set_fact:
+        target_vlans: "{{ manual_vlans }}"
+      when: vlan_source == "manual"
+    
+    - name: "VLANS: Prüfe ob VLANs vorhanden"
+      fail:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✗ FEHLER: Keine VLANs gefunden!
+          ═══════════════════════════════════════════════════════════
+          
+          Quelle '{{ vlan_source }}' enthält keine VLAN-Definition.
+          
+          ═══════════════════════════════════════════════════════════
+      when: target_vlans | length == 0
+    
+    - name: "VLANS: Zeige zu konfigurierende VLANs"
+      debug:
+        msg: |
+          Zu konfigurierende VLANs ({{ target_vlans | length }}):
+          {% for vlan in target_vlans %}
+            VLAN {{ vlan.vlan_id }}: {{ vlan.name }}
+              Tagged (Trunk):   {{ vlan.tagged_ports | default([]) | join(', ') or 'keine' }}
+              Untagged (Access): {{ vlan.untagged_ports | default([]) | join(', ') or 'keine' }}
+          {% endfor %}
+
+    # =========================================================================
+    # SCHRITT 3: VLANs konfigurieren
+    # =========================================================================
+    
+    - name: "CONFIG: VLANs konfigurieren (State: {{ vlan_state }})"
+      cisco_vlan:
+        host: "{{ switch_ip }}"
+        password: "{{ switch_password }}"
+        vlans: "{{ target_vlans }}"
+        state: "{{ vlan_state }}"
+      register: vlan_result
+    
+    - name: "CONFIG: Zeige Ergebnis"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ VLAN-KONFIGURATION ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:          {{ target_switch }}
+          State:           {{ vlan_state }}
+          VLANs erstellt:  {{ vlan_result.vlans_created | length }}
+          VLANs gelöscht:  {{ vlan_result.vlans_deleted | length }}
+          VLANs aktualisiert: {{ vlan_result.vlans_updated | length }}
+          Ports konfiguriert: {{ vlan_result.ports_configured | default([]) | length }}
+          
+          {% if vlan_result.ports_configured | default([]) | length > 0 %}
+          Port-Zuweisungen:
+          {% for port_info in vlan_result.ports_configured %}
+            {{ port_info }}
+          {% endfor %}
+          {% endif %}
+          
+          ═══════════════════════════════════════════════════════════
+
+    # =========================================================================
+    # SCHRITT 4: Inventory aktualisieren
+    # =========================================================================
+    
+    - name: "INVENTORY: Aktualisiere config.vlans"
+      inventory_manager:
+        inventory_path: "{{ inventory_file }}"
+        switch_name: "{{ target_switch }}"
+        switch_data:
+          ansible_host: "{{ switch_ip }}"
+          switch_type: "{{ switch_data.switch_type }}"
+          switch_model: "{{ switch_data.switch_model | default('WS-C2924C-XL') }}"
+          switch_location: "{{ switch_data.switch_location | default('Unknown') }}"
+          switch_role: "{{ switch_data.switch_role | default('access') }}"
+          hardware_info: "{{ switch_data.hardware_info | default({}) }}"
+          config:
+            vlans: "{{ target_vlans }}"
+        action: update
+        force: true
+      register: inventory_result
+      when: 
+        - update_inventory | lower == "yes"
+        - vlan_state == "present"
+    
+    - name: "INVENTORY: Zeige Ergebnis"
+      debug:
+        msg: "✓ Inventory aktualisiert: {{ inventory_result.message }}"
+      when: 
+        - update_inventory | lower == "yes"
+        - inventory_result is defined
+        - inventory_result.message is defined
+
+    # =========================================================================
+    # ZUSAMMENFASSUNG
+    # =========================================================================
+    
+    - name: "COMPLETE: Zusammenfassung"
+      debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          ✓ VLAN-KONFIGURATION ABGESCHLOSSEN
+          ═══════════════════════════════════════════════════════════
+          
+          Switch:     {{ target_switch }} ({{ switch_ip }})
+          Quelle:     {{ vlan_source }}
+          State:      {{ vlan_state }}
+          
+          {% if vlan_state == 'present' %}
+          Konfigurierte VLANs:
+          {% for vlan in target_vlans %}
+            VLAN {{ vlan.vlan_id }}: {{ vlan.name }}
+          {% endfor %}
+          {% else %}
+          Gelöschte VLANs:
+          {% for vlan in target_vlans %}
+            VLAN {{ vlan.vlan_id }}
+          {% endfor %}
+          {% endif %}
+          
+          Inventory:  {{ 'Aktualisiert' if (update_inventory | lower == 'yes' and vlan_state == 'present') else 'Nicht aktualisiert' }}
+          
+          ═══════════════════════════════════════════════════════════
+          
+          Verifizieren via Telnet:
+            telnet {{ switch_ip }}
+            > enable
+            # show vlan
+          
+          ═══════════════════════════════════════════════════════════

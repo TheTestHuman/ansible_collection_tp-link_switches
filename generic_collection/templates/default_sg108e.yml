@@ -27,16 +27,5 @@ vlans:
     tagged_ports: [1]
     untagged_ports: [3, 4, 5, 6, 7, 8]
 
-# Port-Beschreibungen (für Dokumentation, nicht vom Modul verwendet)
-port_descriptions:
-  1: "Uplink/Trunk"
-  2: "Management"
-  3: "Client"
-  4: "Client"
-  5: "Client"
-  6: "Client"
-  7: "Client"
-  8: "Client"
-
 # Easy Smart unterstützt kein LAG
 lag: {}

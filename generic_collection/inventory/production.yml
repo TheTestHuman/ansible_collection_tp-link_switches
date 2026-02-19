@@ -128,12 +128,58 @@ all:
           - 6
           - 7
           - 8
+    c2924-testc:
+      ansible_host: 10.0.20.1
+      switch_type: cisco_c2924
+      switch_model: WS-C2924C-XL-EN
+      switch_location: egal
+      switch_role: access
+      hardware_info: {}
+      config:
+        vlans:
+        - vlan_id: 1
+          name: default
+          tagged_ports: []
+          untagged_ports:
+          - 23
+          - 24
+        - vlan_id: 10
+          name: Management
+          tagged_ports:
+          - 1
+          untagged_ports:
+          - 2
+        - vlan_id: 20
+          name: Clients
+          tagged_ports:
+          - 1
+          untagged_ports:
+          - 3
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
+          - 9
+          - 10
+          - 11
+          - 12
+          - 13
+          - 14
+          - 15
+          - 16
+          - 17
+          - 18
+          - 19
+          - 20
+          - 21
+          - 22
   children:
     tp_link_sg3210_switches:
       hosts: {}
     tp_link_sg108e_switches:
       hosts: {}
-    cisco_2900xl_switches:
+    cisco_c2924_switches:
       hosts: {}
     tp_link_sg3452x:
       hosts:
@@ -141,3 +187,6 @@ all:
     tp_link_sg108e:
       hosts:
         sg108e-test1: null
+    cisco_c2924:
+      hosts:
+        c2924-testc: null

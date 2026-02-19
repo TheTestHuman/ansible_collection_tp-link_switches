@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Cisco Telnet Connection Handler
-Basis-Klasse für alle Cisco 2900XL Module (kein SSH auf altem IOS)
+Basis-Klasse für alle Cisco C2924 Module (kein SSH auf altem IOS)
 
 Getestet mit:
   - WS-C2924C-XL-EN
@@ -19,7 +19,7 @@ import re
 
 class CiscoTelnetConnection:
     """
-    Telnet-Verbindung zu Cisco Catalyst 2900 XL Switches.
+    Telnet-Verbindung zu Cisco Catalyst C2924 Switches.
     
     Usage:
         with CiscoTelnetConnection(

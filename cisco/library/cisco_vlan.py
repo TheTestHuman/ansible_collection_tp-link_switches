@@ -3,6 +3,7 @@
 Cisco VLAN Configuration Module (Combined)
 - VLAN erstellen/löschen
 - VLAN-Name setzen
+- Ports zu VLANs zuweisen (Access/Trunk)
 
 Getestet mit:
   - WS-C2924C-XL-EN
@@ -24,7 +25,7 @@ from ansible.module_utils.basic import AnsibleModule
 # =============================================================================
 
 class CiscoTelnetConnection:
-    """Telnet-Verbindung zu Cisco Catalyst 2900 XL Switches."""
+    """Telnet-Verbindung zu Cisco Catalyst C2924 Switches."""
     
     def __init__(self, host, password, enable_password=None, port=23, timeout=30):
         self.host = host
@@ -37,6 +38,7 @@ class CiscoTelnetConnection:
         self.in_enable_mode = False
         self.in_config_mode = False
         self.in_vlan_mode = False
+        self.in_interface_mode = False
     
     def connect(self):
         """Telnet-Verbindung aufbauen und einloggen"""
@@ -64,6 +66,8 @@ class CiscoTelnetConnection:
         """In den VLAN-Datenbank-Modus wechseln (für alte IOS-Versionen)"""
         if not self.in_enable_mode:
             self.enable()
+        if self.in_config_mode:
+            self.exit_configure()
         self.tn.write(b"vlan database\n")
         time.sleep(1)
         self.tn.read_until(b"(vlan)#", timeout=10)
@@ -100,6 +104,8 @@ class CiscoTelnetConnection:
         """In den Konfigurationsmodus wechseln"""
         if self.in_config_mode:
             return
+        if self.in_vlan_mode:
+            self.exit_vlan_database()
         if not self.in_enable_mode:
             self.enable()
         self.tn.write(b"configure terminal\n")
@@ -113,6 +119,8 @@ class CiscoTelnetConnection:
     
     def exit_configure(self):
         """Konfigurationsmodus verlassen"""
+        if self.in_interface_mode:
+            self.exit_interface()
         if not self.in_config_mode:
             return
         self.tn.write(b"end\n")
@@ -120,8 +128,62 @@ class CiscoTelnetConnection:
         self.tn.read_until(b"#", timeout=10)
         self.in_config_mode = False
     
+    def interface(self, port_number):
+        """In Interface-Konfigurationsmodus wechseln"""
+        if not self.in_config_mode:
+            self.configure()
+        # Cisco C2924 verwendet FastEthernet 0/X
+        cmd = f"interface FastEthernet 0/{port_number}\n"
+        self.tn.write(cmd.encode('ascii'))
+        time.sleep(0.5)
+        self.tn.read_until(b"(config-if)#", timeout=10)
+        self.in_interface_mode = True
+    
+    def exit_interface(self):
+        """Interface-Modus verlassen"""
+        if not self.in_interface_mode:
+            return
+        self.tn.write(b"exit\n")
+        time.sleep(0.5)
+        self.tn.read_until(b"(config)#", timeout=10)
+        self.in_interface_mode = False
+    
+    def set_access_port(self, port_number, vlan_id):
+        """Port als Access-Port konfigurieren"""
+        self.interface(port_number)
+        # Access Mode setzen
+        self.tn.write(b"switchport mode access\n")
+        time.sleep(0.3)
+        self.tn.read_until(b"#", timeout=5)
+        # VLAN zuweisen
+        self.tn.write(f"switchport access vlan {vlan_id}\n".encode('ascii'))
+        time.sleep(0.3)
+        self.tn.read_until(b"#", timeout=5)
+        self.exit_interface()
+    
+    def set_trunk_port(self, port_number, allowed_vlans=None, native_vlan=1):
+        """Port als Trunk-Port konfigurieren"""
+        self.interface(port_number)
+        # Trunk Mode setzen
+        self.tn.write(b"switchport mode trunk\n")
+        time.sleep(0.3)
+        self.tn.read_until(b"#", timeout=5)
+        # Native VLAN setzen
+        self.tn.write(f"switchport trunk native vlan {native_vlan}\n".encode('ascii'))
+        time.sleep(0.3)
+        self.tn.read_until(b"#", timeout=5)
+        # Allowed VLANs setzen (falls angegeben)
+        if allowed_vlans:
+            vlan_list = ','.join(str(v) for v in allowed_vlans)
+            self.tn.write(f"switchport trunk allowed vlan {vlan_list}\n".encode('ascii'))
+            time.sleep(0.3)
+            self.tn.read_until(b"#", timeout=5)
+        self.exit_interface()
+    
     def save_config(self):
         """Konfiguration in NVRAM speichern"""
+        if self.in_interface_mode:
+            self.exit_interface()
         if self.in_config_mode:
             self.exit_configure()
         self.tn.write(b"write memory\n")
@@ -157,6 +219,8 @@ class CiscoTelnetConnection:
     
     def get_vlans(self):
         """VLANs auslesen und als Dictionary zurückgeben"""
+        if self.in_config_mode:
+            self.exit_configure()
         output = self.execute("show vlan", wait=1)
         vlans = {}
         current_vlan = None
@@ -210,10 +274,11 @@ class CiscoTelnetConnection:
 DOCUMENTATION = '''
 ---
 module: cisco_vlan
-short_description: Manage VLANs on Cisco Catalyst 2900 XL
+short_description: Manage VLANs on Cisco Catalyst C2924
 description:
     - Create, delete, and configure VLANs
     - Set VLAN names
+    - Assign ports to VLANs (access/trunk)
 options:
     host:
         description: Switch IP address
@@ -228,6 +293,19 @@ options:
         description: List of VLANs to configure
         required: true
         type: list
+        suboptions:
+            vlan_id:
+                description: VLAN ID (1-1001)
+                required: true
+            name:
+                description: VLAN name
+                required: true
+            tagged_ports:
+                description: Ports as trunk (tagged)
+                type: list
+            untagged_ports:
+                description: Ports as access (untagged)
+                type: list
     state:
         description: Desired state
         choices: ['present', 'absent']
@@ -235,15 +313,19 @@ options:
 '''
 
 EXAMPLES = '''
-- name: Create VLANs
+- name: Create VLANs with port assignments
   cisco_vlan:
     host: 10.0.20.1
     password: "{{ vault_password }}"
     vlans:
-      - id: 10
+      - vlan_id: 10
         name: Management
-      - id: 20
+        tagged_ports: [1]
+        untagged_ports: [2]
+      - vlan_id: 20
         name: Clients
+        tagged_ports: [1]
+        untagged_ports: [3, 4, 5, 6, 7, 8]
     state: present
 '''
 
@@ -280,6 +362,7 @@ def run_module():
         vlans_deleted=[],
         vlans_updated=[],
         vlans_existing=[],
+        ports_configured=[],
     )
     
     host = module.params['host']
@@ -303,7 +386,7 @@ def run_module():
             # Check mode - nur prüfen, nicht ändern
             if module.check_mode:
                 for vlan in vlans:
-                    vlan_id = int(vlan['id'])
+                    vlan_id = int(vlan.get('vlan_id', vlan.get('id', 0)))
                     if state == 'present' and vlan_id not in existing:
                         result['vlans_created'].append(vlan_id)
                         result['changed'] = True
@@ -312,11 +395,13 @@ def run_module():
                         result['changed'] = True
                 module.exit_json(**result)
             
+            # ===== PHASE 1: VLANs erstellen/löschen =====
             # In VLAN Database Modus wechseln (für alte IOS-Versionen!)
             conn.vlan_database()
             
             for vlan in vlans:
-                vlan_id = int(vlan['id'])
+                # Unterstütze beide Formate: vlan_id (TP-Link Style) und id (alt)
+                vlan_id = int(vlan.get('vlan_id', vlan.get('id', 0)))
                 vlan_name = vlan.get('name', f'VLAN{vlan_id:04d}')
                 
                 # Validierung
@@ -351,11 +436,40 @@ def run_module():
                         result['vlans_deleted'].append(vlan_id)
                         result['changed'] = True
             
-            # VLAN Database Modus verlassen (APPLY wird automatisch ausgeführt)
+            # VLAN Database Modus verlassen
             conn.exit_vlan_database()
             
-            # Bei altem IOS wird beim exit aus vlan database automatisch gespeichert
-            # Trotzdem nochmal write memory zur Sicherheit
+            # ===== PHASE 2: Ports zu VLANs zuweisen =====
+            if state == 'present':
+                # Sammle alle Trunk-Ports und ihre VLANs
+                trunk_ports = {}  # {port: [vlan_ids]}
+                
+                for vlan in vlans:
+                    vlan_id = int(vlan.get('vlan_id', vlan.get('id', 0)))
+                    tagged_ports = vlan.get('tagged_ports', []) or []
+                    untagged_ports = vlan.get('untagged_ports', []) or []
+                    
+                    # Tagged Ports = Trunk Ports
+                    for port in tagged_ports:
+                        if port not in trunk_ports:
+                            trunk_ports[port] = []
+                        trunk_ports[port].append(vlan_id)
+                    
+                    # Untagged Ports = Access Ports
+                    for port in untagged_ports:
+                        conn.set_access_port(port, vlan_id)
+                        result['ports_configured'].append(f"Fa0/{port} -> VLAN {vlan_id} (access)")
+                        result['changed'] = True
+                
+                # Trunk Ports konfigurieren
+                for port, vlan_list in trunk_ports.items():
+                    # Native VLAN = 1, allowed VLANs = alle gesammelten
+                    all_vlans = sorted(set([1] + vlan_list))
+                    conn.set_trunk_port(port, allowed_vlans=all_vlans, native_vlan=1)
+                    result['ports_configured'].append(f"Fa0/{port} -> Trunk (VLANs: {','.join(map(str, all_vlans))})")
+                    result['changed'] = True
+            
+            # Konfiguration speichern
             if result['changed']:
                 conn.save_config()
             

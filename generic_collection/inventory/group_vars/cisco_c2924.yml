@@ -1,6 +1,6 @@
 ---
 # =============================================================================
-# Typ-spezifische Variablen: Cisco Catalyst 2900 XL
+# Typ-spezifische Variablen: Cisco Catalyst C2924
 # =============================================================================
 
 # Verbindungseinstellungen
@@ -12,7 +12,7 @@ command_timeout: 15
 # Hardware-Limits
 max_ports: 24
 max_vlans: 64
-max_lag_groups: 0                   # EtherChannel nicht auf allen 2900XL
+max_lag_groups: 0                   # EtherChannel nicht auf allen C2924
 
 # CLI-Verhalten (IOS-spezifisch)
 cli_prompt_pattern: "[#>]"
@@ -33,7 +33,7 @@ ios_commands:
 module_path: "cisco/library"
 
 # Default-Config Template
-default_config_template: "default_2900xl.yml"
+default_config_template: "default_c2924.yml"
 
 # Feature-Support (IOS 12.0 ist limitiert)
 features:

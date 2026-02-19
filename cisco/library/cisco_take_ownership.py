@@ -27,7 +27,7 @@ from ansible.module_utils.basic import AnsibleModule
 # =============================================================================
 
 class CiscoTelnetConnection:
-    """Telnet-Verbindung zu Cisco Catalyst 2900 XL Switches."""
+    """Telnet-Verbindung zu Cisco Catalyst C2924 Switches."""
     
     def __init__(self, host, password, enable_password=None, port=23, timeout=30):
         self.host = host
@@ -96,7 +96,7 @@ class CiscoTelnetConnection:
 DOCUMENTATION = '''
 ---
 module: cisco_take_ownership
-short_description: Take ownership of Cisco Catalyst 2900 XL
+short_description: Take ownership of Cisco Catalyst C2924
 description:
     - Checks if switch is reachable via Telnet
     - Informs user if console setup is required
@@ -135,9 +135,9 @@ CONSOLE_SETUP_MSG = '''
 KONSOLEN-KONFIGURATION ERFORDERLICH!
 ================================================================================
 
-Der Cisco 2900 XL Switch ist unter {host} nicht per Telnet erreichbar.
+Der Cisco C2924 Switch ist unter {host} nicht per Telnet erreichbar.
 
-Im Gegensatz zu TP-Link Switches hat der Cisco 2900 XL im Werkszustand
+Im Gegensatz zu TP-Link Switches hat der Cisco C2924 im Werkszustand
 KEINE IP-Adresse und ist nur über die serielle Konsole erreichbar.
 
 Bitte führe folgende Schritte manuell über Konsole durch:
@@ -251,7 +251,7 @@ def run_module():
         changed=False,
         reachable=False,
         hardware_info={},
-        inventory_name=f"2900xl-{switch_suffix}",
+        inventory_name=f"c2924-{switch_suffix}",
         switch_location=switch_location,
         message='',
         console_setup_required=False,

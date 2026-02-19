@@ -10,7 +10,7 @@
 all:
   children:
     
-    # ... andere Switch-Gruppen (tp_link_sg3210, tp_link_sg108e, cisco_2900xl) ...
+    # ... andere Switch-Gruppen (tp_link_sg3210, tp_link_sg108e, cisco_c2924) ...
     
     tp_link_sg3452x:
       hosts:

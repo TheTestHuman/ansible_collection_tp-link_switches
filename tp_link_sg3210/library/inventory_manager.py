@@ -32,7 +32,7 @@ options:
         description: Path to the inventory YAML file
         required: true
     switch_name:
-        description: Name of the switch (e.g., 2900xl-lab, sg3210-office)
+        description: Name of the switch (e.g., c2924-lab, sg3210-office)
         required: true
     switch_data:
         description: Dictionary with switch configuration data
@@ -60,11 +60,11 @@ EXAMPLES = '''
   inventory_manager:
     inventory_path: "../inventory/production.yml"
     vault_path: "../inventory/vault.yml"
-    switch_name: "2900xl-lab"
+    switch_name: "c2924-lab"
     switch_password: "secret123"
     switch_data:
       ansible_host: "10.0.20.1"
-      switch_type: "cisco_2900xl"
+      switch_type: "cisco_c2924"
     action: add
 '''
 
@@ -303,7 +303,7 @@ def build_switch_data(params):
         data['connection'] = conn
     else:
         # Defaults basierend auf Switch-Typ
-        if params['switch_type'] == 'cisco_2900xl':
+        if params['switch_type'] == 'cisco_c2924':
             data['connection'] = {'protocol': 'telnet', 'port': 23}
         elif params['switch_type'] == 'tp_link_sg3210':
             data['connection'] = {'protocol': 'ssh', 'port': 22}
