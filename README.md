@@ -1,3 +1,5 @@
+ ⚠️ **DEVELOPMENT PREVIEW** - This collection is currently under active development as part of an academic thesis. APIs and functionality may change. Use at your own risk.
+
 # Ansible Collection - Multi-Vendor Switch Automation
 
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
