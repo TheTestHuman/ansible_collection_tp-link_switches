@@ -63,9 +63,6 @@
       private: false
 
   vars:
-  
-  environment:
-    ANSIBLE_LIBRARY: "{{ playbook_dir }}/../../tp_link_sg3452x/library"
     # Factory Default Settings
     factory_default_ip: "192.168.0.1"
     factory_default_user: "admin"
@@ -81,6 +78,9 @@
     # Timing
     ssh_startup_delay: 5
     ssh_port_timeout: 30
+  
+  environment:
+    ANSIBLE_LIBRARY: "{{ playbook_dir }}/../../tp_link_sg3452x/library"
 
   tasks:
     # =========================================================================
