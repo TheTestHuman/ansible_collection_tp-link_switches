@@ -41,15 +41,15 @@ vlans:
 # -----------------------------------------------------------------------------
 # LAG-Konfiguration (Link Aggregation Groups)
 # -----------------------------------------------------------------------------
-lags:
+lag:
   - lag_id: 1
     ports: [45, 46]  # LAG zwischen zwei Uplink-Ports
-    mode: "static"   # oder "lacp"
+    mode: lacp   # oder static
   
   # Beispiel für weitere LAGs:
   # - lag_id: 2
   #   ports: [47, 48]
-  #   mode: "lacp"
+  #   mode: "static"
 
 # -----------------------------------------------------------------------------
 # Port Security Konfiguration
