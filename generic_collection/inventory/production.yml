@@ -1,192 +1,39 @@
+# Ansible Collection - Production Inventory
+# =========================================
+# Dieses Inventory wird automatisch durch die Playbooks befüllt.
+# Manuelle Einträge sind möglich, werden aber bei Take-Ownership überschrieben.
+#
+# Unterstützte Switch-Typen:
+#   - tp_link_sg3210: TP-Link SG3210 (SSH/Expect)
+#   - tp_link_sg3452x: TP-Link SG3452X (SSH/Expect)
+#   - tp_link_sg108e: TP-Link SG108E (UDP)
+#   - cisco_c2924: Cisco Catalyst C2924 (Telnet)
+
 all:
   vars:
     ansible_user: admin
     ansible_connection: local
+
   hosts:
-    sg3452x-test9:
-      ansible_host: 10.0.10.3
-      switch_type: tp_link_sg3452x
-      switch_model: TL-SG3452X
-      switch_location: egal
-      switch_role: access
-      connection:
-        protocol: ssh
-        port: 22
-      cli:
-        hostname: TEST9
-        enable_command: enable
-      ownership:
-        taken: true
-        taken_at: null
-        firmware_version: unknown
-      config:
-        vlans:
-        - vlan_id: 1
-          name: Default
-          untagged_ports:
-          - 1
-          - 2
-          - 3
-          - 4
-          - 5
-          - 6
-          - 7
-          - 8
-          - 9
-          - 10
-          - 11
-          - 12
-          - 13
-          - 14
-          - 15
-          - 16
-          - 17
-          - 18
-          - 19
-          - 20
-          - 21
-          - 22
-          - 23
-          - 24
-          - 25
-          - 26
-          - 27
-          - 28
-          - 29
-          - 30
-          - 31
-          - 32
-          - 33
-          - 34
-          - 35
-          - 36
-          - 37
-          - 38
-          - 39
-          - 40
-          - 41
-          - 42
-          - 43
-          - 44
-          tagged_ports: []
-        - vlan_id: 10
-          name: Management
-          untagged_ports: []
-          tagged_ports:
-          - 45
-          - 46
-          - 47
-          - 48
-        - vlan_id: 22
-          name: Servers
-          untagged_ports: []
-          tagged_ports:
-          - 45
-          - 46
-          - 47
-          - 48
-        - vlan_id: 32
-          name: Guest
-          untagged_ports: []
-          tagged_ports:
-          - 45
-          - 46
-          - 47
-          - 48
-        ports: {}
-        lag: {}
-    sg108e-test1:
-      ansible_host: 10.0.10.4
-      switch_type: tp_link_sg108e
-      switch_model: TL-SG108E
-      switch_location: egal
-      switch_role: access
-      connection:
-        protocol: udp
-        port: 29808
-        mac_address: 8C:86:DD:AD:91:82
-      ownership:
-        taken: true
-        taken_at: null
-        mac_address: 8C:86:DD:AD:91:82
-      config:
-        vlans:
-        - vlan_id: 1
-          name: Default
-          untagged_ports:
-          - 1
-          - 2
-          tagged_ports: []
-        - vlan_id: 30
-          name: Clients
-          tagged_ports:
-          - 1
-          untagged_ports:
-          - 3
-          - 4
-          - 5
-          - 6
-          - 7
-          - 8
-    c2924-testc:
-      ansible_host: 10.0.20.1
-      switch_type: cisco_c2924
-      switch_model: WS-C2924C-XL-EN
-      switch_location: egal
-      switch_role: access
-      hardware_info: {}
-      config:
-        vlans:
-        - vlan_id: 1
-          name: default
-          tagged_ports: []
-          untagged_ports:
-          - 23
-          - 24
-        - vlan_id: 10
-          name: Management
-          tagged_ports:
-          - 1
-          untagged_ports:
-          - 2
-        - vlan_id: 20
-          name: Clients
-          tagged_ports:
-          - 1
-          untagged_ports:
-          - 3
-          - 4
-          - 5
-          - 6
-          - 7
-          - 8
-          - 9
-          - 10
-          - 11
-          - 12
-          - 13
-          - 14
-          - 15
-          - 16
-          - 17
-          - 18
-          - 19
-          - 20
-          - 21
-          - 22
-  children:
-    tp_link_sg3210_switches:
-      hosts: {}
-    tp_link_sg108e_switches:
-      hosts: {}
-    cisco_c2924_switches:
-      hosts: {}
-    tp_link_sg3452x:
-      hosts:
-        sg3452x-test9: null
-    tp_link_sg108e:
-      hosts:
-        sg108e-test1: null
-    cisco_c2924:
-      hosts:
-        c2924-testc: null
+    # Beispiel-Eintrag (wird durch Take-Ownership ersetzt):
+    #
+    # sg3210-example:
+    #   ansible_host: 10.0.10.1
+    #   switch_type: tp_link_sg3210
+    #   switch_model: TL-SG3210
+    #   switch_location: "Büro"
+    #   switch_role: access
+    #   connection:
+    #     protocol: ssh
+    #     port: 22
+    #   cli:
+    #     hostname: "SWITCH01"
+    #     enable_command: enable
+    #   ownership:
+    #     taken: true
+    #     taken_at: "2026-02-21"
+    #     firmware_version: "1.0.0"
+    #   config:
+    #     vlans: []
+    #     ports: {}
+    #     lag: {}

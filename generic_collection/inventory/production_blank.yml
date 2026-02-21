@@ -1,103 +1,39 @@
----
-# =============================================================================
-# Ansible Inventory - Production
-# =============================================================================
-# Diese Datei enthält alle verwalteten Switches.
-# Passwörter werden separat in vault.yml gespeichert.
+# Ansible Collection - Production Inventory
+# =========================================
+# Dieses Inventory wird automatisch durch die Playbooks befüllt.
+# Manuelle Einträge sind möglich, werden aber bei Take-Ownership überschrieben.
 #
-# Switch-Typen:
-#   - tp_link_sg3210: TP-Link SG3210 (SSH/Telnet)
-#   - tp_link_sg108e: TP-Link SG108E Easy Smart (UDP)
+# Unterstützte Switch-Typen:
+#   - tp_link_sg3210: TP-Link SG3210 (SSH/Expect)
+#   - tp_link_sg3452x: TP-Link SG3452X (SSH/Expect)
+#   - tp_link_sg108e: TP-Link SG108E (UDP)
 #   - cisco_c2924: Cisco Catalyst C2924 (Telnet)
-# =============================================================================
 
 all:
   vars:
     ansible_user: admin
-    ansible_password: "{{ vault_default_password }}"
-    connection_timeout: 20
-    command_timeout: 10
+    ansible_connection: local
 
-  hosts: {}
-    # Beispiel SG3210:
-    # sg3210-office:
+  hosts:
+    # Beispiel-Eintrag (wird durch Take-Ownership ersetzt):
+    #
+    # sg3210-example:
     #   ansible_host: 10.0.10.1
     #   switch_type: tp_link_sg3210
     #   switch_model: TL-SG3210
-    #   switch_location: Office
+    #   switch_location: "Büro"
     #   switch_role: access
     #   connection:
     #     protocol: ssh
     #     port: 22
     #   cli:
-    #     hostname: OFFICE
+    #     hostname: "SWITCH01"
     #     enable_command: enable
     #   ownership:
     #     taken: true
-    #     taken_at: null
-    #     firmware_version: unknown
+    #     taken_at: "2026-02-21"
+    #     firmware_version: "1.0.0"
     #   config:
     #     vlans: []
     #     ports: {}
     #     lag: {}
-    #
-    # Beispiel SG108E:
-    # sg108e-meeting:
-    #   ansible_host: 10.0.10.50
-    #   switch_type: tp_link_sg108e
-    #   switch_model: TL-SG108E
-    #   switch_location: Meeting Room
-    #   switch_role: access
-    #   connection:
-    #     protocol: udp
-    #     port: 29808
-    #     mac_address: "AA:BB:CC:DD:EE:FF"
-    #   ownership:
-    #     taken: true
-    #     taken_at: null
-    #   config:
-    #     vlans: []
-    #
-    # Beispiel Cisco C2924:
-    # c2924-lab:
-    #   ansible_host: 10.0.20.1
-    #   switch_type: cisco_c2924
-    #   switch_model: WS-C2924C-XL-EN
-    #   switch_location: Lab
-    #   switch_role: test
-    #   connection:
-    #     protocol: telnet
-    #     port: 23
-    #     enable_password: "{{ vault_passwords['c2924-lab'] }}"
-    #   cli:
-    #     hostname: SWITCH
-    #     enable_command: enable
-    #     config_command: configure terminal
-    #   ownership:
-    #     taken: true
-    #   config: null
-
-  children:
-    tp_link_sg3210:
-      hosts: {}
-    
-    tp_link_sg108e:
-      hosts: {}
-    
-    cisco_c2924:
-      hosts: {}
-    
-    core_switches:
-      hosts: {}
-    
-    access_switches:
-      hosts: {}
-    
-    distribution_switches:
-      hosts: {}
-    
-    test_switches:
-      hosts: {}
-    
-    unconfigured:
-      hosts: {}
