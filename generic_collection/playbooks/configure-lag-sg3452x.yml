@@ -48,13 +48,12 @@
       private: false
 
   vars:
-  
-  environment:
-    ANSIBLE_LIBRARY: "{{ playbook_dir }}/../../tp_link_sg3452x/library"
     inventory_file: "{{ playbook_dir }}/../inventory/production.yml"
     vault_file: "{{ playbook_dir }}/../inventory/vault.yml"
     ssh_check_timeout: 5
-
+  
+  environment:
+    ANSIBLE_LIBRARY: "{{ playbook_dir }}/../../tp_link_sg3452x/library"
   tasks:
     # =========================================================================
     # SCHRITT 1: Switch-Daten aus Inventory laden
