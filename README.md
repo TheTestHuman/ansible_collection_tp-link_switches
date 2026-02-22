@@ -33,7 +33,7 @@ This collection configures multiple switch types through a unified interface whi
 **System packages:**
 ```bash
 sudo apt-get update
-sudo apt-get install -y git ansible expect python3-pip
+sudo apt-get install -y git python3 python3-pip ansible expect
 ```
 
 **Python packages (for SG108E only):**
