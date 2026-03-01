@@ -44,7 +44,7 @@ vlans:
 lag:
   - lag_id: 1
     ports: [45, 46]  # LAG zwischen zwei Uplink-Ports
-    mode: lacp   # oder static
+    mode: static
   
   # Beispiel für weitere LAGs:
   # - lag_id: 2
@@ -66,36 +66,20 @@ lag:
 #
 port_security:
   - port: 1
-    mode: "secure-mac-num"
-    max_macs: 5
-    violation_action: "restrict"
+    max_mac_count: 5
+    mode: "dynamic"
+    status: "forward"
+    exceed_notification: false
   
   - port: 2
-    mode: "secure-mac-num"
-    max_macs: 5
-    violation_action: "restrict"
-  
-  # Access Ports (3-44) mit Standard-Security
-  # - ports: [3, 4, 5, ..., 44]
-  #   mode: "secure-mac-num"
-  #   max_macs: 3
-  #   violation_action: "restrict"
-  
-  # Uplink/Trunk Ports (45-48) meist ohne Port Security
-  - port: 45
-    mode: "disabled"
-  
-  - port: 46
-    mode: "disabled"
-  
-  - port: 47
-    mode: "disabled"
-  
-  - port: 48
-    mode: "disabled"
+    max_mac_count: 5
+    mode: "dynamic"
+    status: "forward"
+    exceed_notification: false
 
+  # Uplink/
 # -----------------------------------------------------------------------------
-# Port-Beschreibungen (optional, falls unterstützt)
+# Port-Beschreibunge (optional, falls unterstützt)
 # -----------------------------------------------------------------------------
 # port_descriptions:
 #   1: "Workstation 1"

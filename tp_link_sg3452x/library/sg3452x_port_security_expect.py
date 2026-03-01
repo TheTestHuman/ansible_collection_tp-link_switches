@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-TP-Link SG3452X Port Security Configuration Module
+TP-Link SG3452X Port Security Configuration Module (Idempotent)
 
 Configures MAC address-based port security on TP-Link SG3452X Managed Switches via SSH.
 
 Features:
+    - IDEMPOTENT: Only applies changes when configuration differs from desired state
     - Limits the number of MAC addresses that can be learned on a port
     - Supports different learning modes (dynamic, static, permanent)
     - Supports different violation actions (forward, drop, disable)
@@ -30,12 +31,14 @@ from ansible.module_utils.basic import AnsibleModule
 import subprocess
 import tempfile
 import os
+import re
 
 DOCUMENTATION = r'''
 module: sg3452x_port_security_expect
-short_description: Configure Port Security on TP-Link SG3452X switches
+short_description: Idempotent Port Security configuration on TP-Link SG3452X switches
 description:
     - Configures MAC address-based port security on TP-Link switches
+    - IDEMPOTENT - only applies changes when needed (changed=false if config matches)
     - Limits the number of MAC addresses that can be learned on a port
     - Supports different learning modes and violation actions
     - Supports SFP+ ports 49-52 (ten-gigabitEthernet)
@@ -86,7 +89,7 @@ options:
 '''
 
 EXAMPLES = r'''
-# Enable port security with max 1 MAC address
+# Enable port security (idempotent)
 - sg3452x_port_security_expect:
     host: 10.0.10.1
     username: admin
@@ -103,16 +106,6 @@ EXAMPLES = r'''
     username: admin
     password: secret
     port: 49
-    max_mac_count: 5
-    mode: dynamic
-    status: forward
-
-# Allow up to 5 MACs in dynamic mode
-- sg3452x_port_security_expect:
-    host: 10.0.10.1
-    username: admin
-    password: secret
-    port: 3
     max_mac_count: 5
     mode: dynamic
     status: forward
@@ -140,19 +133,229 @@ def get_interface_type(port):
         return "gigabitEthernet"
 
 
+# =============================================================================
+# IDEMPOTENCY FUNCTIONS
+# =============================================================================
+
+def parse_running_config_port_security(output, target_port):
+    """
+    Parse 'show running-config' output to extract port security configuration for a specific port.
+    
+    The switch outputs port security in a single line format:
+    mac address-table max-mac-count max-number 5 mode permanent status drop exceed-max-learned enable
+    
+    All parameters are optional except max-number when configured.
+    Default values if not present in config:
+    - mode: dynamic
+    - status: forward  
+    - exceed-max-learned: disable (False)
+    """
+    config = {
+        'max_mac_count': 64,  # Default
+        'mode': 'dynamic',     # Default
+        'status': 'forward',   # Default (not configured = forward)
+        'exceed_notification': False,
+        'configured': False
+    }
+    
+    current_port = None
+    in_target_port = False
+    
+    lines = output.split('\n')
+    
+    for line in lines:
+        line_stripped = line.strip()
+        
+        # Parse gigabitEthernet interface
+        gi_match = re.match(r'^interface\s+gigabitEthernet\s+1/0/(\d+)', line_stripped)
+        if gi_match:
+            current_port = int(gi_match.group(1))
+            in_target_port = (current_port == target_port)
+            continue
+        
+        # Parse ten-gigabitEthernet interface (SFP+ ports 49-52)
+        te_match = re.match(r'^interface\s+ten-gigabitEthernet\s+1/0/(\d+)', line_stripped)
+        if te_match:
+            current_port = int(te_match.group(1))
+            in_target_port = (current_port == target_port)
+            continue
+        
+        # Parse port security config only for target port
+        # Format: mac address-table max-mac-count max-number X [mode Y] [status Z] [exceed-max-learned enable/disable]
+        if in_target_port and line_stripped.startswith('mac address-table max-mac-count'):
+            config['configured'] = True
+            
+            # Parse max-number (required when configured)
+            max_match = re.search(r'max-number\s+(\d+)', line_stripped)
+            if max_match:
+                config['max_mac_count'] = int(max_match.group(1))
+            
+            # Parse mode (optional, default: dynamic)
+            mode_match = re.search(r'\bmode\s+(dynamic|static|permanent)\b', line_stripped)
+            if mode_match:
+                config['mode'] = mode_match.group(1)
+            
+            # Parse status (optional, default: forward)
+            status_match = re.search(r'\bstatus\s+(forward|drop|disable)\b', line_stripped)
+            if status_match:
+                config['status'] = status_match.group(1)
+            
+            # Parse exceed-max-learned (optional, default: disable)
+            exceed_match = re.search(r'exceed-max-learned\s+(enable|disable)', line_stripped)
+            if exceed_match:
+                config['exceed_notification'] = (exceed_match.group(1) == 'enable')
+            
+            continue
+        
+        # Reset context on next interface
+        if line_stripped.startswith('interface ') and current_port == target_port:
+            break
+        if line_stripped.startswith('#') and in_target_port:
+            break
+    
+    return config
+
+
+def calculate_port_security_diff(current_config, desired_config, state):
+    """
+    Calculate the difference between current and desired port security configuration.
+    
+    Returns:
+        dict: {
+            'needs_change': bool,
+            'reasons': []
+        }
+    """
+    diff = {
+        'needs_change': False,
+        'reasons': []
+    }
+    
+    if state == 'present':
+        # Check each parameter
+        if current_config['max_mac_count'] != desired_config['max_mac_count']:
+            diff['needs_change'] = True
+            diff['reasons'].append(
+                f"max_mac_count: {current_config['max_mac_count']} -> {desired_config['max_mac_count']}"
+            )
+        
+        if current_config['mode'] != desired_config['mode']:
+            diff['needs_change'] = True
+            diff['reasons'].append(
+                f"mode: {current_config['mode']} -> {desired_config['mode']}"
+            )
+        
+        if current_config['status'] != desired_config['status']:
+            diff['needs_change'] = True
+            diff['reasons'].append(
+                f"status: {current_config['status']} -> {desired_config['status']}"
+            )
+        
+        if current_config['exceed_notification'] != desired_config['exceed_notification']:
+            diff['needs_change'] = True
+            diff['reasons'].append(
+                f"exceed_notification: {current_config['exceed_notification']} -> {desired_config['exceed_notification']}"
+            )
+    
+    elif state == 'absent':
+        # Check if port security is currently enabled (status != disable or forward with non-default settings)
+        if current_config['configured'] and current_config['status'] != 'disable':
+            diff['needs_change'] = True
+            diff['reasons'].append("Port security needs to be disabled")
+    
+    return diff
+
+
+# =============================================================================
+# EXPECT SCRIPT GENERATORS
+# =============================================================================
+
+def create_get_config_script(host, username, password, hostname):
+    """Generate expect script to get running-config"""
+    
+    script = f'''#!/usr/bin/expect -f
+set timeout 60
+log_user 1
+
+spawn ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=20 {username}@{host}
+
+expect {{
+    "No route to host" {{
+        puts "ERROR_CONNECTION_FAILED: No route to host {host}"
+        exit 1
+    }}
+    "Connection refused" {{
+        puts "ERROR_CONNECTION_REFUSED: Connection refused by {host}"
+        exit 1
+    }}
+    "Connection timed out" {{
+        puts "ERROR_CONNECTION_TIMEOUT: Connection to {host} timed out"
+        exit 1
+    }}
+    "Host is unreachable" {{
+        puts "ERROR_HOST_UNREACHABLE: Host {host} is unreachable"
+        exit 1
+    }}
+    "password:" {{
+        send "{password}\\r"
+    }}
+    timeout {{
+        puts "ERROR_CONNECTION_TIMEOUT: Timeout connecting to {host}"
+        exit 1
+    }}
+}}
+
+expect {{
+    "Permission denied" {{
+        puts "ERROR_AUTH_FAILED: Authentication failed"
+        exit 1
+    }}
+    "{hostname}>" {{}}
+    timeout {{
+        puts "ERROR_AUTH_FAILED: Login timeout"
+        exit 1
+    }}
+}}
+
+send "enable\\r"
+expect {{
+    "{hostname}#" {{}}
+    "Password:" {{
+        puts "ERROR_ENABLE_PASSWORD: Enable password required"
+        exit 1
+    }}
+    timeout {{
+        puts "ERROR_ENABLE_TIMEOUT: Timeout entering enable mode"
+        exit 1
+    }}
+}}
+
+send "terminal length 0\\r"
+expect "{hostname}#"
+
+send "show running-config\\r"
+expect "{hostname}#"
+
+send "exit\\r"
+expect "{hostname}>"
+send "exit\\r"
+expect eof
+
+puts "SUCCESS_GET_CONFIG"
+'''
+    return script
+
+
 def create_port_security_script(host, username, password, port, 
                                  max_mac_count, mode, status, 
                                  exceed_notification, state, hostname):
-    """Generate expect script for port security configuration with robust error handling"""
+    """Generate expect script for port security configuration"""
     
-    # Get the correct interface type
     iface_type = get_interface_type(port)
     
-    # Build configuration commands based on state
     if state == 'present':
         config_commands = f'''
 # === CONFIGURE PORT SECURITY ===
-# Configure max MAC count
 send "mac address-table max-mac-count max-number {max_mac_count}\\r"
 expect {{
     "{hostname}(config-if)#" {{}}
@@ -166,7 +369,6 @@ expect {{
     }}
 }}
 
-# Configure learning mode
 send "mac address-table max-mac-count mode {mode}\\r"
 expect {{
     "{hostname}(config-if)#" {{}}
@@ -180,7 +382,6 @@ expect {{
     }}
 }}
 
-# Configure status/action
 send "mac address-table max-mac-count status {status}\\r"
 expect {{
     "{hostname}(config-if)#" {{}}
@@ -194,7 +395,6 @@ expect {{
     }}
 }}
 
-# Configure exceed notification
 send "mac address-table max-mac-count exceed-max-learned {'enable' if exceed_notification else 'disable'}\\r"
 expect {{
     "{hostname}(config-if)#" {{}}
@@ -211,7 +411,6 @@ expect {{
     else:  # state == 'absent'
         config_commands = f'''
 # === DISABLE PORT SECURITY ===
-# Disable port security
 send "mac address-table max-mac-count status disable\\r"
 expect {{
     "{hostname}(config-if)#" {{}}
@@ -221,7 +420,6 @@ expect {{
     }}
 }}
 
-# Reset to defaults
 send "mac address-table max-mac-count max-number 64\\r"
 expect "{hostname}(config-if)#"
 
@@ -260,10 +458,6 @@ expect {{
     }}
     "Host is unreachable" {{
         puts "ERROR_HOST_UNREACHABLE: Host {host} is unreachable"
-        exit 1
-    }}
-    "Name or service not known" {{
-        puts "ERROR_DNS_FAILED: Could not resolve hostname {host}"
         exit 1
     }}
     "password:" {{
@@ -371,6 +565,10 @@ puts "SUCCESS_COMPLETE"
     return script
 
 
+# =============================================================================
+# OUTPUT ANALYSIS
+# =============================================================================
+
 def analyze_output(stdout, stderr):
     """Analyze expect output for errors and return appropriate message"""
     
@@ -396,7 +594,7 @@ def analyze_output(stdout, stderr):
         if error_key in combined:
             return False, error_msg
     
-    if "SUCCESS_COMPLETE" in combined or "SUCCESS_CONFIG_SAVED" in combined:
+    if "SUCCESS_COMPLETE" in combined or "SUCCESS_CONFIG_SAVED" in combined or "SUCCESS_GET_CONFIG" in combined:
         return True, None
     
     if "Saving user config OK!" in combined:
@@ -425,6 +623,10 @@ def run_expect_script(script_content, timeout=60):
             os.unlink(script_path)
 
 
+# =============================================================================
+# MAIN MODULE
+# =============================================================================
+
 def main():
     module = AnsibleModule(
         argument_spec=dict(
@@ -442,7 +644,7 @@ def main():
                       choices=['present', 'absent']),
             hostname=dict(type='str', required=False, default='SG3452X'),
         ),
-        supports_check_mode=False
+        supports_check_mode=True
     )
     
     host = module.params['host']
@@ -464,7 +666,65 @@ def main():
     if not 0 <= max_mac_count <= 64:
         module.fail_json(msg=f"max_mac_count must be between 0 and 64, got {max_mac_count}")
     
-    # Generate expect script
+    # === STEP 1: Get current configuration ===
+    get_config_script = create_get_config_script(host, username, password, hostname)
+    
+    try:
+        stdout, stderr, returncode = run_expect_script(get_config_script, timeout=60)
+    except subprocess.TimeoutExpired:
+        module.fail_json(msg="Timeout getting current configuration", host=host)
+    except Exception as e:
+        module.fail_json(msg=f"Error getting configuration: {str(e)}", host=host)
+    
+    success, error_msg = analyze_output(stdout, stderr)
+    if not success:
+        module.fail_json(
+            msg=f"Failed to get configuration: {error_msg}",
+            host=host,
+            stdout=stdout,
+            stderr=stderr
+        )
+    
+    # === STEP 2: Parse current port security configuration ===
+    current_config = parse_running_config_port_security(stdout, port)
+    
+    # === STEP 3: Build desired configuration ===
+    desired_config = {
+        'max_mac_count': max_mac_count,
+        'mode': mode,
+        'status': status,
+        'exceed_notification': exceed_notification,
+    }
+    
+    # === STEP 4: Calculate diff ===
+    diff = calculate_port_security_diff(current_config, desired_config, state)
+    
+    # === STEP 5: Check if changes are needed ===
+    if not diff['needs_change']:
+        if state == 'present':
+            msg = f"Port {port} security already configured as desired"
+        else:
+            msg = f"Port {port} security already disabled"
+        
+        module.exit_json(
+            changed=False,
+            msg=msg,
+            host=host,
+            port=port,
+            current_config=current_config,
+        )
+    
+    # === STEP 6: Check mode (dry-run) ===
+    if module.check_mode:
+        module.exit_json(
+            changed=True,
+            msg=f"Would apply changes: {'; '.join(diff['reasons'])}",
+            host=host,
+            port=port,
+            diff=diff,
+        )
+    
+    # === STEP 7: Apply changes ===
     try:
         script = create_port_security_script(
             host, username, password, port,
@@ -474,7 +734,6 @@ def main():
     except Exception as e:
         module.fail_json(msg=f"Error generating script: {str(e)}")
     
-    # Run script
     try:
         stdout, stderr, returncode = run_expect_script(script, timeout=60)
     except subprocess.TimeoutExpired:
@@ -485,7 +744,6 @@ def main():
     except Exception as e:
         module.fail_json(msg=f"Unexpected error: {str(e)}", host=host)
     
-    # Analyze output
     success, error_msg = analyze_output(stdout, stderr)
     
     if not success:
@@ -498,11 +756,12 @@ def main():
             return_code=returncode
         )
     
+    # === STEP 8: Report success ===
     action = "configured" if state == 'present' else "disabled"
     
     module.exit_json(
         changed=True,
-        msg=f"Port security {action} on port {port}",
+        msg=f"Port {port} security {action}: {'; '.join(diff['reasons'])}",
         host=host,
         port_security={
             'port': port,
@@ -512,6 +771,7 @@ def main():
             'exceed_notification': exceed_notification,
             'state': state
         },
+        changes=diff['reasons'],
         stdout=stdout
     )
 

@@ -84,45 +84,10 @@ port_security:
     exceed_notification: true
     description: "Management - strikt"
   
-  - port: 3
-    max_mac_count: 3
-    mode: dynamic
-    status: forward
-    exceed_notification: true
-    description: "Client"
-  
   - port: 4
     max_mac_count: 3
-    mode: dynamic
-    status: forward
-    exceed_notification: true
-    description: "Client"
-  
-  - port: 5
-    max_mac_count: 3
-    mode: dynamic
-    status: forward
-    exceed_notification: true
-    description: "Client"
-  
-  - port: 6
-    max_mac_count: 3
-    mode: dynamic
-    status: forward
-    exceed_notification: true
-    description: "Client"
-  
-  - port: 7
-    max_mac_count: 3
-    mode: dynamic
-    status: forward
-    exceed_notification: true
-    description: "Client"
-  
-  - port: 8
-    max_mac_count: 3
-    mode: dynamic
-    status: forward
+    mode: "dynamic"
+    status: "forward"
     exceed_notification: true
     description: "Client"
   
