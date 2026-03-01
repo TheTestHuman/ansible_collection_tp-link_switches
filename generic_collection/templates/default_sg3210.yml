@@ -24,13 +24,13 @@
 vlans:
   - vlan_id: 1
     name: "default"
-    tagged_ports: []
-    untagged_ports: [1, 9, 10]
+    tagged_ports: [1]
+    untagged_ports: [9, 10]
   
   - vlan_id: 10
     name: "Management"
     tagged_ports: [1]
-    untagged_ports: [2]
+    untagged_ports: [2, 3]
   
   - vlan_id: 22
     name: "default_test"

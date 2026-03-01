@@ -132,7 +132,7 @@
     # =========================================================================
     
     - name: "STAGE 1: Passwort setzen und SSH aktivieren (via Telnet)"
-      tp_link_initial_setup:
+      sg3210_initial_setup:
         default_ip: "{{ factory_default_ip }}"
         default_user: "{{ factory_default_user }}"
         default_password: "{{ factory_default_password }}"
@@ -174,7 +174,7 @@
     # =========================================================================
     
     - name: "STAGE 2: IP-Adresse ändern (via SSH)"
-      tp_link_change_ip:
+      sg3210_change_ip:
         current_ip: "{{ factory_default_ip }}"
         username: "{{ factory_default_user }}"
         password: "{{ switch_password }}"

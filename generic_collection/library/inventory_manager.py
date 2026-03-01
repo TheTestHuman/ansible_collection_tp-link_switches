@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
-Inventory Manager Module
+Inventory Manager Module (Idempotent)
 - Fügt neue Switches zum Inventory hinzu
-- Aktualisiert bestehende Einträge
+- Aktualisiert bestehende Einträge NUR wenn sich etwas ändert
 - Verwaltet Passwörter in vault.yml
-- Unterstützt alle Switch-Typen (Cisco, TP-Link SG3210, TP-Link SG108E)
+- Unterstützt alle Switch-Typen (Cisco, TP-Link SG3210, TP-Link SG3452X, TP-Link SG108E)
+
+Idempotenz:
+  - changed=False wenn keine Änderungen nötig
+  - changed=True nur bei tatsächlichen Änderungen
 
 Getestet mit:
   - Ansible 2.9+
@@ -12,21 +16,22 @@ Getestet mit:
 """
 
 import os
-import re
 import yaml
 from datetime import datetime
 from ansible.module_utils.basic import AnsibleModule
+import copy
 
 
 DOCUMENTATION = '''
 ---
 module: inventory_manager
-short_description: Manage switch entries in Ansible inventory and vault
+short_description: Manage switch entries in Ansible inventory and vault (idempotent)
 description:
     - Add new switches to inventory
-    - Update existing switch entries
+    - Update existing switch entries ONLY if configuration differs
     - Manage passwords in vault.yml
     - Support for multiple switch types
+    - IDEMPOTENT - returns changed=False if no changes needed
 options:
     inventory_path:
         description: Path to the inventory YAML file
@@ -66,7 +71,80 @@ EXAMPLES = '''
       ansible_host: "10.0.20.1"
       switch_type: "cisco_c2924"
     action: add
+
+- name: Update switch (idempotent - only changes if different)
+  inventory_manager:
+    inventory_path: "../inventory/production.yml"
+    switch_name: "sg3210-test"
+    switch_data:
+      ansible_host: "10.0.10.1"
+      switch_type: "tp_link_sg3210"
+      config:
+        vlans: [...]
+    action: update
+    force: true
 '''
+
+
+def normalize_for_comparison(data):
+    """
+    Normalisiert Daten für den Vergleich.
+    Sortiert Listen und konvertiert zu vergleichbaren Typen.
+    """
+    if data is None:
+        return None
+    
+    if isinstance(data, dict):
+        return {k: normalize_for_comparison(v) for k, v in sorted(data.items())}
+    
+    if isinstance(data, list):
+        # Bei Listen von Dicts (z.B. VLANs) nach einem Key sortieren
+        if len(data) > 0 and isinstance(data[0], dict):
+            # Versuche nach vlan_id, id, oder name zu sortieren
+            sort_key = None
+            for key in ['vlan_id', 'id', 'name', 'port', 'lag_id']:
+                if key in data[0]:
+                    sort_key = key
+                    break
+            
+            if sort_key:
+                try:
+                    sorted_data = sorted(data, key=lambda x: x.get(sort_key, 0))
+                    return [normalize_for_comparison(item) for item in sorted_data]
+                except TypeError:
+                    pass
+        
+        # Einfache Listen sortieren wenn möglich
+        try:
+            return sorted([normalize_for_comparison(item) for item in data])
+        except TypeError:
+            return [normalize_for_comparison(item) for item in data]
+    
+    return data
+
+
+def configs_are_equal(current, new):
+    """
+    Vergleicht zwei Konfigurationen nach Normalisierung.
+    Ignoriert Felder die sich automatisch ändern (z.B. timestamps).
+    """
+    # Felder die beim Vergleich ignoriert werden
+    ignore_fields = {'taken_at', 'last_updated'}
+    
+    def remove_ignored(data):
+        if isinstance(data, dict):
+            return {k: remove_ignored(v) for k, v in data.items() if k not in ignore_fields}
+        if isinstance(data, list):
+            return [remove_ignored(item) for item in data]
+        return data
+    
+    current_clean = remove_ignored(current)
+    new_clean = remove_ignored(new)
+    
+    current_norm = normalize_for_comparison(current_clean)
+    new_norm = normalize_for_comparison(new_clean)
+    
+    return current_norm == new_norm
 
 
 class VaultManager:
@@ -80,7 +158,6 @@ class VaultManager:
     def _load(self):
         """Vault-Datei laden"""
         if not os.path.exists(self.vault_path):
-            # Erstelle neue Vault-Struktur
             self.vault = {
                 'vault_default_username': 'admin',
                 'vault_default_password': 'neinnein',
@@ -91,13 +168,11 @@ class VaultManager:
         with open(self.vault_path, 'r', encoding='utf-8') as f:
             content = f.read()
             
-        # Prüfe ob Datei verschlüsselt ist
         if content.startswith('$ANSIBLE_VAULT'):
             raise ValueError("vault.yml is encrypted. Please decrypt first or use --ask-vault-pass")
         
         self.vault = yaml.safe_load(content) or {}
         
-        # Sicherstellen dass die Grundstruktur existiert
         if 'vault_passwords' not in self.vault:
             self.vault['vault_passwords'] = {}
         if 'vault_default_password' not in self.vault:
@@ -107,17 +182,14 @@ class VaultManager:
     
     def _save(self):
         """Vault-Datei speichern"""
-        # Backup erstellen
         backup_path = self.vault_path + '.bak'
         if os.path.exists(self.vault_path):
             with open(self.vault_path, 'r') as f:
                 backup_content = f.read()
-            # Nur Backup wenn nicht verschlüsselt
             if not backup_content.startswith('$ANSIBLE_VAULT'):
                 with open(backup_path, 'w') as f:
                     f.write(backup_content)
         
-        # Header-Kommentare
         header = '''---
 # =============================================================================
 # Ansible Vault - Credentials
@@ -128,7 +200,6 @@ class VaultManager:
 
 '''
         
-        # YAML ohne Header erstellen
         yaml_content = yaml.dump(
             self.vault,
             default_flow_style=False,
@@ -140,19 +211,28 @@ class VaultManager:
         with open(self.vault_path, 'w', encoding='utf-8') as f:
             f.write(header + yaml_content)
     
-    def set_password(self, switch_name, password):
-        """Passwort für einen Switch setzen"""
-        if self.vault['vault_passwords'] is None:
-            self.vault['vault_passwords'] = {}
-        self.vault['vault_passwords'][switch_name] = password
-        self._save()
-        return True
-    
     def get_password(self, switch_name):
         """Passwort für einen Switch abrufen"""
         if self.vault['vault_passwords'] and switch_name in self.vault['vault_passwords']:
             return self.vault['vault_passwords'][switch_name]
         return self.vault.get('vault_default_password', 'neinnein')
+    
+    def set_password(self, switch_name, password):
+        """
+        Passwort für einen Switch setzen.
+        Returns: True wenn geändert, False wenn identisch
+        """
+        if self.vault['vault_passwords'] is None:
+            self.vault['vault_passwords'] = {}
+        
+        current_password = self.vault['vault_passwords'].get(switch_name)
+        
+        if current_password == password:
+            return False  # Keine Änderung
+        
+        self.vault['vault_passwords'][switch_name] = password
+        self._save()
+        return True
     
     def remove_password(self, switch_name):
         """Passwort für einen Switch entfernen"""
@@ -164,7 +244,7 @@ class VaultManager:
 
 
 class InventoryManager:
-    """Verwaltet das Ansible Inventory YAML"""
+    """Verwaltet das Ansible Inventory YAML (idempotent)"""
     
     def __init__(self, inventory_path):
         self.inventory_path = os.path.abspath(inventory_path)
@@ -179,7 +259,6 @@ class InventoryManager:
         with open(self.inventory_path, 'r', encoding='utf-8') as f:
             self.inventory = yaml.safe_load(f)
         
-        # Sicherstellen dass die Grundstruktur existiert
         if 'all' not in self.inventory:
             self.inventory = {'all': {'hosts': {}, 'children': {}}}
         if 'hosts' not in self.inventory['all']:
@@ -187,7 +266,6 @@ class InventoryManager:
     
     def _save(self):
         """Inventory-Datei speichern"""
-        # Backup erstellen
         backup_path = self.inventory_path + '.bak'
         if os.path.exists(self.inventory_path):
             with open(self.inventory_path, 'r') as f:
@@ -195,7 +273,6 @@ class InventoryManager:
             with open(backup_path, 'w') as f:
                 f.write(backup_content)
         
-        # YAML mit schöner Formatierung speichern
         with open(self.inventory_path, 'w', encoding='utf-8') as f:
             yaml.dump(
                 self.inventory, 
@@ -216,15 +293,24 @@ class InventoryManager:
     
     def add_switch(self, switch_name, switch_data, force=False):
         """
-        Fügt einen neuen Switch hinzu.
+        Fügt einen neuen Switch hinzu oder aktualisiert einen bestehenden.
+        IDEMPOTENT: Gibt changed=False zurück wenn keine Änderungen nötig.
         
         Returns:
-            (success, message, was_updated)
+            (success, message, changed)
         """
         exists = self.switch_exists(switch_name)
         
         if exists and not force:
             return False, f"Switch '{switch_name}' already exists. Use force=true to overwrite.", False
+        
+        if exists:
+            # Vergleiche aktuelle mit neuer Konfiguration
+            current_data = self.get_switch(switch_name)
+            
+            if configs_are_equal(current_data, switch_data):
+                # Keine Änderungen nötig
+                return True, f"Switch '{switch_name}' already up-to-date.", False
         
         # Switch hinzufügen/aktualisieren
         self.inventory['all']['hosts'][switch_name] = switch_data
@@ -239,14 +325,13 @@ class InventoryManager:
         if exists:
             return True, f"Switch '{switch_name}' updated.", True
         else:
-            return True, f"Switch '{switch_name}' added to inventory.", False
+            return True, f"Switch '{switch_name}' added to inventory.", True
     
     def _add_to_group(self, switch_name, switch_type):
         """Fügt Switch zur passenden Typ-Gruppe hinzu"""
         if not switch_type:
             return
         
-        # Gruppe erstellen falls nicht vorhanden
         if 'children' not in self.inventory['all']:
             self.inventory['all']['children'] = {}
         
@@ -256,25 +341,22 @@ class InventoryManager:
         if 'hosts' not in self.inventory['all']['children'][switch_type]:
             self.inventory['all']['children'][switch_type]['hosts'] = {}
         
-        # Switch zur Gruppe hinzufügen (Wert ist None in Gruppen)
         self.inventory['all']['children'][switch_type]['hosts'][switch_name] = None
     
     def remove_switch(self, switch_name):
         """Entfernt einen Switch aus dem Inventory"""
         if not self.switch_exists(switch_name):
-            return False, f"Switch '{switch_name}' not found."
+            return False, f"Switch '{switch_name}' not found.", False
         
-        # Aus hosts entfernen
         del self.inventory['all']['hosts'][switch_name]
         
-        # Aus allen Gruppen entfernen
         if 'children' in self.inventory['all']:
             for group_name, group_data in self.inventory['all']['children'].items():
                 if 'hosts' in group_data and switch_name in group_data['hosts']:
                     del group_data['hosts'][switch_name]
         
         self._save()
-        return True, f"Switch '{switch_name}' removed from inventory."
+        return True, f"Switch '{switch_name}' removed from inventory.", True
     
     def list_switches(self, switch_type=None):
         """Listet alle Switches auf, optional gefiltert nach Typ"""
@@ -295,44 +377,32 @@ def build_switch_data(params):
         'switch_role': params.get('switch_role', 'access'),
     }
     
-    # Connection-Daten (OHNE Passwort - das kommt in vault.yml)
     if params.get('connection'):
-        # Passwort aus connection entfernen falls vorhanden
         conn = dict(params['connection'])
         conn.pop('password', None)
         data['connection'] = conn
     else:
-        # Defaults basierend auf Switch-Typ
         if params['switch_type'] == 'cisco_c2924':
             data['connection'] = {'protocol': 'telnet', 'port': 23}
-        elif params['switch_type'] == 'tp_link_sg3210':
+        elif params['switch_type'] in ['tp_link_sg3210', 'tp_link_sg3452x']:
             data['connection'] = {'protocol': 'ssh', 'port': 22}
         elif params['switch_type'] == 'tp_link_sg108e':
             data['connection'] = {'protocol': 'udp', 'port': 29808}
     
-    # CLI-Daten (optional)
     if params.get('cli'):
         data['cli'] = params['cli']
     
-    # Ownership-Daten
     data['ownership'] = {
         'taken': True,
         'taken_at': params.get('taken_at', datetime.utcnow().isoformat() + 'Z'),
     }
     
-    # Hardware-spezifische Ownership-Daten
     if params.get('hardware_info'):
         hw = params['hardware_info']
-        if 'ios_version' in hw:
-            data['ownership']['ios_version'] = hw['ios_version']
-        if 'firmware_version' in hw:
-            data['ownership']['firmware_version'] = hw['firmware_version']
-        if 'mac_address' in hw:
-            data['ownership']['mac_address'] = hw['mac_address']
-        if 'serial_number' in hw:
-            data['ownership']['serial_number'] = hw['serial_number']
+        for key in ['ios_version', 'firmware_version', 'mac_address', 'serial_number']:
+            if key in hw:
+                data['ownership'][key] = hw[key]
     
-    # Config (initial leer oder aus Parameter)
     data['config'] = params.get('config', None)
     
     return data
@@ -355,7 +425,6 @@ def run_module():
         action=dict(type='str', default='add', choices=['add', 'update', 'remove', 'check']),
         force=dict(type='bool', default=False),
         switch_data=dict(type='dict', required=False),
-        # Vault-Support
         vault_path=dict(type='str', required=False),
         switch_password=dict(type='str', required=False, no_log=True),
     )
@@ -387,7 +456,6 @@ def run_module():
         
         manager = InventoryManager(inventory_path)
         
-        # Vault-Manager initialisieren wenn Pfad angegeben
         vault_manager = None
         if vault_path:
             vault_manager = VaultManager(vault_path)
@@ -399,7 +467,6 @@ def run_module():
         result['switch_exists'] = manager.switch_exists(switch_name)
         
         if action == 'check':
-            # Nur prüfen ob Switch existiert
             if result['switch_exists']:
                 result['message'] = f"Switch '{switch_name}' exists in inventory."
                 result['switch_data'] = manager.get_switch(switch_name)
@@ -412,22 +479,19 @@ def run_module():
                 result['changed'] = result['switch_exists']
                 module.exit_json(**result)
             
-            success, message = manager.remove_switch(switch_name)
-            result['changed'] = success
+            success, message, changed = manager.remove_switch(switch_name)
+            result['changed'] = changed
             result['message'] = message
             
-            # Auch Passwort aus Vault entfernen
-            if success and vault_manager:
+            if changed and vault_manager:
                 vault_manager.remove_password(switch_name)
                 result['vault_updated'] = True
             
             module.exit_json(**result)
         
         elif action in ['add', 'update']:
-            # Switch-Daten erstellen
             if module.params.get('switch_data'):
                 switch_data = module.params['switch_data']
-                # Passwort aus switch_data entfernen (kommt in vault)
                 if 'connection' in switch_data and 'password' in switch_data['connection']:
                     if not switch_password:
                         switch_password = switch_data['connection']['password']
@@ -445,25 +509,27 @@ def run_module():
                 result['switch_data'] = switch_data
                 module.exit_json(**result)
             
-            # Bei update immer force=True
             if action == 'update':
                 force = True
             
-            success, message, was_updated = manager.add_switch(switch_name, switch_data, force)
+            success, message, changed = manager.add_switch(switch_name, switch_data, force)
             
             if not success:
                 module.fail_json(msg=message, **result)
             
-            result['changed'] = True
+            result['changed'] = changed
             result['message'] = message
-            result['was_updated'] = was_updated
+            result['was_updated'] = changed
             result['switch_data'] = switch_data
             
-            # Passwort in Vault speichern
+            # Passwort in Vault speichern (nur wenn sich geändert hat)
             if vault_manager and switch_password:
-                vault_manager.set_password(switch_name, switch_password)
-                result['vault_updated'] = True
-                result['message'] += " Password stored in vault."
+                vault_changed = vault_manager.set_password(switch_name, switch_password)
+                if vault_changed:
+                    result['vault_updated'] = True
+                    result['changed'] = True
+                    if not changed:
+                        result['message'] = f"Switch '{switch_name}' unchanged, but password updated in vault."
             
     except FileNotFoundError as e:
         module.fail_json(msg=str(e), **result)

@@ -216,7 +216,7 @@
     # =========================================================================
     
     - name: "CONFIG: LAGs konfigurieren"
-      tp_link_lag_expect:
+      sg3210_lag_expect:
         host: "{{ switch_ip }}"
         username: "{{ switch_user }}"
         password: "{{ switch_password }}"

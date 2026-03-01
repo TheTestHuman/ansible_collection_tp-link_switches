@@ -11,6 +11,7 @@ Features:
     - Supports different learning modes (dynamic, static, permanent)
     - Supports different violation actions (forward, drop, disable)
     - Exceed notification when max MAC count is reached
+    - Supports SFP+ ports 49-52 (ten-gigabitEthernet)
 
 Parameters:
     host: Switch IP address
@@ -23,17 +24,6 @@ Parameters:
     exceed_notification: Enable notification on exceed (default: false)
     state: present or absent (default: present)
     hostname: CLI prompt hostname (default: SG3452X)
-
-Example:
-    - tp_link_port_security_expect:
-        host: "10.0.10.1"
-        username: "admin"
-        password: "secret"
-        port: 2
-        max_mac_count: 1
-        mode: permanent
-        status: drop
-        exceed_notification: true
 """
 
 from ansible.module_utils.basic import AnsibleModule
@@ -42,12 +32,13 @@ import tempfile
 import os
 
 DOCUMENTATION = r'''
-module: tp_link_port_security_expect
+module: sg3452x_port_security_expect
 short_description: Configure Port Security on TP-Link SG3452X switches
 description:
     - Configures MAC address-based port security on TP-Link switches
     - Limits the number of MAC addresses that can be learned on a port
     - Supports different learning modes and violation actions
+    - Supports SFP+ ports 49-52 (ten-gigabitEthernet)
 options:
     host:
         description: Switch IP address
@@ -60,7 +51,7 @@ options:
         required: true
         no_log: true
     port:
-        description: Port number (1-10)
+        description: Port number (1-52)
         required: true
         type: int
     max_mac_count:
@@ -96,7 +87,7 @@ options:
 
 EXAMPLES = r'''
 # Enable port security with max 1 MAC address
-- tp_link_port_security_expect:
+- sg3452x_port_security_expect:
     host: 10.0.10.1
     username: admin
     password: secret
@@ -106,8 +97,18 @@ EXAMPLES = r'''
     status: drop
     exceed_notification: true
 
+# Port security on SFP+ port
+- sg3452x_port_security_expect:
+    host: 10.0.10.1
+    username: admin
+    password: secret
+    port: 49
+    max_mac_count: 5
+    mode: dynamic
+    status: forward
+
 # Allow up to 5 MACs in dynamic mode
-- tp_link_port_security_expect:
+- sg3452x_port_security_expect:
     host: 10.0.10.1
     username: admin
     password: secret
@@ -117,27 +118,35 @@ EXAMPLES = r'''
     status: forward
 
 # Disable port security
-- tp_link_port_security_expect:
+- sg3452x_port_security_expect:
     host: 10.0.10.1
     username: admin
     password: secret
     port: 2
     state: absent
-
-# With custom hostname
-- tp_link_port_security_expect:
-    host: 10.0.20.1
-    username: admin
-    password: secret
-    port: 5
-    hostname: "OFFICE-SW1"
 '''
+
+
+def get_interface_type(port):
+    """
+    Determine the interface type based on port number.
+    
+    Ports 1-48: gigabitEthernet (Copper)
+    Ports 49-52: ten-gigabitEthernet (SFP+)
+    """
+    if port >= 49:
+        return "ten-gigabitEthernet"
+    else:
+        return "gigabitEthernet"
 
 
 def create_port_security_script(host, username, password, port, 
                                  max_mac_count, mode, status, 
                                  exceed_notification, state, hostname):
     """Generate expect script for port security configuration with robust error handling"""
+    
+    # Get the correct interface type
+    iface_type = get_interface_type(port)
     
     # Build configuration commands based on state
     if state == 'present':
@@ -310,7 +319,7 @@ expect {{
 }}
 
 # === INTERFACE MODE ===
-send "interface gigabitEthernet 1/0/{port}\\r"
+send "interface {iface_type} 1/0/{port}\\r"
 expect {{
     "{hostname}(config-if)#" {{}}
     "Invalid" {{
@@ -381,39 +390,15 @@ def analyze_output(stdout, stderr):
         "ERROR_SAVE_TIMEOUT": "Timeout saving configuration",
     }
     
-    ssh_errors = {
-        "No route to host": "Connection failed: No route to host",
-        "Connection refused": "Connection refused: SSH service not reachable",
-        "Connection timed out": "Connection timeout: Host not responding",
-        "Host is unreachable": "Host unreachable",
-        "Permission denied": "Authentication failed: Wrong username or password",
-    }
-    
     combined = stdout + stderr
     
-    # Check for our custom error markers first
     for error_key, error_msg in error_patterns.items():
         if error_key in combined:
             return False, error_msg
     
-    # Check for raw SSH errors
-    for ssh_error, error_msg in ssh_errors.items():
-        if ssh_error in combined:
-            return False, error_msg
-    
-    # Check for success
     if "SUCCESS_COMPLETE" in combined or "SUCCESS_CONFIG_SAVED" in combined:
         return True, None
     
-    # Check for "bad command" or other errors in output
-    if "bad command" in combined.lower() or "invalid" in combined.lower():
-        return False, "Invalid command - check switch firmware compatibility"
-    
-    # Check for timeout markers
-    if "TIMEOUT" in combined.upper():
-        return False, "Timeout during configuration"
-    
-    # If we got "Saving user config OK!" that's also success
     if "Saving user config OK!" in combined:
         return True, None
     

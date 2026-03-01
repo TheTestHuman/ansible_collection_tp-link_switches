@@ -211,7 +211,7 @@
     # =========================================================================
     
     - name: "CONFIG: VLANs konfigurieren (Mode: {{ vlan_mode }})"
-      tp_link_batch_vlan_expect:
+      sg3452x_batch_vlan_expect:
         host: "{{ switch_ip }}"
         username: "{{ switch_user }}"
         password: "{{ switch_password }}"
@@ -230,7 +230,7 @@
           
           Switch:          {{ target_switch }}
           Modus:           {{ vlan_mode }}
-          VLANs erstellt:  {{ vlan_result.vlans_created }}
+          VLANs erstellt:  {{ vlan_result.vlans_created | default(0) }}
           VLANs gelöscht:  {{ vlan_result.vlans_deleted | default(0) }}
           
           ═══════════════════════════════════════════════════════════

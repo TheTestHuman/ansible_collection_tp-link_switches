@@ -261,7 +261,7 @@
     # =========================================================================
     
     - name: "CONFIG: Port-Security konfigurieren"
-      tp_link_port_security_expect:
+      sg3452x_port_security_expect:
         host: "{{ switch_ip }}"
         username: "{{ switch_user }}"
         password: "{{ switch_password }}"
@@ -297,7 +297,7 @@
     # =========================================================================
     
     - name: "RESET: Port-Security auf nicht gelisteten Ports deaktivieren"
-      tp_link_port_security_expect:
+      sg3452x_port_security_expect:
         host: "{{ switch_ip }}"
         username: "{{ switch_user }}"
         password: "{{ switch_password }}"

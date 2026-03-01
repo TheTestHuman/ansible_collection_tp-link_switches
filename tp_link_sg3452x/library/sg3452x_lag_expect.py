@@ -11,6 +11,7 @@ Features:
     - LACP modes: active, passive, on (static)
     - Remove LAG configuration
     - Input validation and error handling
+    - Supports SFP+ ports 49-52 (ten-gigabitEthernet)
 
 Parameters:
     host: Switch IP address
@@ -20,21 +21,8 @@ Parameters:
     lag_id: LAG/Port-Channel ID (1-8)
     ports: List of ports for LAG (minimum 2)
     lacp_mode: LACP mode - active, passive, on (default: active)
-        - active: Initiates LACP negotiation
-        - passive: Responds to LACP negotiation
-        - on: Static LAG without LACP (manual)
     state: present or absent (default: present)
     max_port: Maximum port number on switch (default: 52)
-
-Example:
-    - tp_link_lag_expect:
-        host: "10.0.10.1"
-        username: "admin"
-        password: "secret"
-        lag_id: 1
-        ports: [47, 48]
-        lacp_mode: "active"
-        state: "present"
 """
 
 from ansible.module_utils.basic import AnsibleModule
@@ -44,11 +32,12 @@ import os
 
 
 DOCUMENTATION = r'''
-module: tp_link_lag_expect
+module: sg3452x_lag_expect
 short_description: Configure Link Aggregation Groups on TP-Link SG3452X switches
 description:
     - Configures LAG (Link Aggregation Groups) on TP-Link SG3452X switches
     - Supports LACP modes active, passive, and static (on)
+    - Supports SFP+ ports 49-52 (ten-gigabitEthernet)
     - Minimum 2 ports required for LAG
 options:
     host:
@@ -87,13 +76,13 @@ options:
     max_port:
         description: Maximum port number on switch (for validation)
         required: false
-        default: 10
+        default: 52
         type: int
 '''
 
 EXAMPLES = r'''
-# Create LAG with LACP active mode
-- tp_link_lag_expect:
+# Create LAG with LACP active mode on copper ports
+- sg3452x_lag_expect:
     host: 10.0.10.1
     username: admin
     password: secret
@@ -102,33 +91,34 @@ EXAMPLES = r'''
     lacp_mode: active
     state: present
 
-# Create static LAG (no LACP negotiation)
-- tp_link_lag_expect:
+# Create LAG with SFP+ ports (49-52)
+- sg3452x_lag_expect:
     host: 10.0.10.1
     username: admin
     password: secret
     lag_id: 2
+    ports: [49, 50]
+    lacp_mode: active
+    state: present
+
+# Create static LAG (no LACP negotiation)
+- sg3452x_lag_expect:
+    host: 10.0.10.1
+    username: admin
+    password: secret
+    lag_id: 3
     ports: [7, 8]
     lacp_mode: "on"
     state: present
 
 # Remove LAG
-- tp_link_lag_expect:
+- sg3452x_lag_expect:
     host: 10.0.10.1
     username: admin
     password: secret
     lag_id: 1
     ports: [47, 48]
     state: absent
-
-# With custom hostname
-- tp_link_lag_expect:
-    host: 10.0.20.1
-    username: admin
-    password: secret
-    lag_id: 1
-    ports: [47, 48]
-    hostname: "CORE-SW1"
 '''
 
 
@@ -139,25 +129,34 @@ MIN_PORT = 1
 MIN_PORTS_IN_LAG = 2
 
 
+def get_interface_type(port):
+    """
+    Determine the interface type based on port number.
+    
+    Ports 1-48: gigabitEthernet (Copper)
+    Ports 49-52: ten-gigabitEthernet (SFP+)
+    """
+    if port >= 49:
+        return "ten-gigabitEthernet"
+    else:
+        return "gigabitEthernet"
+
+
 def validate_lag_config(module, lag_id, ports, max_port):
     """Validate LAG configuration parameters"""
     
-    # Validate LAG ID
     if not MIN_LAG_ID <= lag_id <= MAX_LAG_ID:
         module.fail_json(msg=f"LAG ID must be between {MIN_LAG_ID} and {MAX_LAG_ID}, got {lag_id}")
     
-    # Validate minimum ports
     if len(ports) < MIN_PORTS_IN_LAG:
         module.fail_json(msg=f"At least {MIN_PORTS_IN_LAG} ports required for LAG, got {len(ports)}")
     
-    # Check for duplicate ports
     seen_ports = set()
     for port in ports:
         if port in seen_ports:
             module.fail_json(msg=f"Duplicate port {port} in ports list")
         seen_ports.add(port)
     
-    # Validate each port
     for port in ports:
         if not isinstance(port, int):
             module.fail_json(msg=f"Port must be an integer, got {type(port).__name__}")
@@ -171,11 +170,11 @@ def create_lag_script(host, username, password, hostname, lag_id, ports, lacp_mo
     port_commands = ""
     
     if state == 'present':
-        # Add ports to LAG
         for port in ports:
+            iface_type = get_interface_type(port)
             port_commands += f'''
 # === Add PORT {port} to LAG {lag_id} ===
-send "interface gigabitEthernet 1/0/{port}\\r"
+send "interface {iface_type} 1/0/{port}\\r"
 expect {{
     "{hostname}(config-if)#" {{}}
     "Invalid" {{
@@ -210,11 +209,11 @@ send "exit\\r"
 expect "{hostname}(config)#"
 '''
     elif state == 'absent':
-        # Remove ports from LAG
         for port in ports:
+            iface_type = get_interface_type(port)
             port_commands += f'''
 # === Remove PORT {port} from LAG ===
-send "interface gigabitEthernet 1/0/{port}\\r"
+send "interface {iface_type} 1/0/{port}\\r"
 expect {{
     "{hostname}(config-if)#" {{}}
     "Invalid" {{
@@ -374,35 +373,15 @@ def analyze_output(stdout, stderr):
         "ERROR_LAG_TIMEOUT": "Timeout during LAG configuration",
     }
     
-    ssh_errors = {
-        "No route to host": "Connection failed: No route to host",
-        "Connection refused": "Connection refused: SSH service not reachable",
-        "Connection timed out": "Connection timeout: Host not responding",
-        "Host is unreachable": "Host unreachable",
-        "Permission denied": "Authentication failed: Wrong username or password",
-    }
-    
     combined = stdout + stderr
     
-    # Check for our custom error markers first
     for error_key, error_msg in error_patterns.items():
         if error_key in combined:
             return False, error_msg
     
-    # Check for raw SSH errors
-    for ssh_error, error_msg in ssh_errors.items():
-        if ssh_error in combined:
-            return False, error_msg
-    
-    # Check for success
     if "SUCCESS_COMPLETE" in combined or "SUCCESS_CONFIG_SAVED" in combined:
         return True, None
     
-    # Check for timeout markers
-    if "TIMEOUT" in combined.upper():
-        return False, "Timeout during configuration"
-    
-    # Fallback success check
     if "Saving user config OK!" in combined:
         return True, None
     
@@ -457,10 +436,8 @@ def main():
     state = module.params['state']
     max_port = module.params['max_port']
     
-    # Validate LAG configuration
     validate_lag_config(module, lag_id, ports, max_port)
     
-    # Generate expect script
     try:
         script = create_lag_script(
             host, username, password, hostname, lag_id, ports, lacp_mode, state
@@ -468,7 +445,6 @@ def main():
     except Exception as e:
         module.fail_json(msg=f"Error generating script: {str(e)}")
     
-    # Run script
     try:
         stdout, stderr, returncode = run_expect_script(script, timeout=120)
     except subprocess.TimeoutExpired:
@@ -479,7 +455,6 @@ def main():
     except Exception as e:
         module.fail_json(msg=f"Unexpected error: {str(e)}", host=host)
     
-    # Analyze output
     success, error_msg = analyze_output(stdout, stderr)
     
     if not success:
@@ -492,7 +467,6 @@ def main():
             return_code=returncode
         )
     
-    # Check for warnings
     warnings = []
     if "WARNING_PORT_IN_LAG" in stdout:
         warnings.append("One or more ports were already members of another LAG")
