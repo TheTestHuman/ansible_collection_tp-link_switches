@@ -1,6 +1,6 @@
- ⚠️ **DEVELOPMENT PREVIEW** - This collection is currently under active development as part of an academic thesis. APIs and functionality may change. Use at your own risk.
-
 # Ansible Collection - Multi-Vendor Switch Automation
+
+⚠️ **DEVELOPMENT PREVIEW** - This collection is currently under active development as part of an academic thesis. APIs and functionality may change. Use at your own risk.
 
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 
@@ -30,13 +30,40 @@ This collection configures multiple switch types through a unified interface whi
 
 **Operating System:** Ubuntu 24.04 LTS (or newer)
 
-**System packages:**
+### System Packages
+
+Update system:
 ```bash
-sudo apt-get update
-sudo apt-get install -y git python3 python3-pip ansible expect
+sudo apt update
 ```
 
-**Python packages (for SG108E only):**
+```bash
+sudo apt upgrade -y
+```
+
+Install Git:
+```bash
+sudo apt install git -y
+```
+
+Install Python:
+```bash
+sudo apt install python3 python3-pip -y
+```
+
+Install Ansible:
+```bash
+sudo apt install ansible -y
+```
+
+Install Expect (required for TP-Link Managed Switches):
+```bash
+sudo apt install expect -y
+```
+
+### Python Packages
+
+Install netifaces (required for SG108E only):
 ```bash
 pip3 install netifaces --break-system-packages
 ```
@@ -46,23 +73,45 @@ pip3 install netifaces --break-system-packages
 Clone the repository:
 ```bash
 git clone https://github.com/TheTestHuman/ansible_collection_tp-link_switches.git
-cd ansible_collection_tp-link_switches/generic_collection
+```
+
+Change to project directory:
+```bash
+cd ansible_collection_tp-link_switches
 ```
 
 Verify the structure:
 ```bash
 ls -la
-# Should show: playbooks/, inventory/, templates/, ansible.cfg
+```
+
+Change to generic_collection:
+```bash
+cd generic_collection
 ```
 
 ## Quick Start
 
 ### 1. Configure Inventory
 
-Copy and edit the inventory templates:
+View the inventory template:
+```bash
+cat inventory/production_blank.yml
+```
+
+Copy production inventory:
 ```bash
 cp inventory/production_blank.yml inventory/production.yml
+```
+
+Copy vault template:
+```bash
 cp inventory/vault_blank.yml inventory/vault.yml
+```
+
+View vault structure:
+```bash
+cat inventory/vault.yml
 ```
 
 Edit `inventory/production.yml` with your switch details:
@@ -82,39 +131,101 @@ vault_passwords:
   sg3210-office: "switch_specific_password"
 ```
 
-### 2. Take Ownership (Factory-Default Switch)
+### 2. Encrypt Vault (Recommended)
+
+Encrypt the vault file:
+```bash
+ansible-vault encrypt inventory/vault.yml
+```
+
+Edit encrypted vault:
+```bash
+ansible-vault edit inventory/vault.yml
+```
+
+Decrypt vault (required before take-ownership):
+```bash
+ansible-vault decrypt inventory/vault.yml
+```
+
+Re-encrypt after take-ownership:
+```bash
+ansible-vault encrypt inventory/vault.yml
+```
+
+### 3. Take Ownership (Factory-Default Switch)
 
 For a new switch in factory state:
+
+TP-Link SG3210:
 ```bash
-# TP-Link Managed (SG3210/SG3452X)
 ansible-playbook playbooks/take-ownership-sg3210.yml
+```
 
-# TP-Link Easy Smart (SG108E)
+TP-Link SG3452X:
+```bash
+ansible-playbook playbooks/take-ownership-sg3452x.yml
+```
+
+TP-Link SG108E:
+```bash
 ansible-playbook playbooks/take-ownership-sg108e.yml
+```
 
-# Cisco C2924 (requires console pre-configuration)
+Cisco C2924 (requires console pre-configuration):
+```bash
 ansible-playbook playbooks/take-ownership-cisco.yml
 ```
 
-### 3. Configure VLANs
+**Note:** If vault is encrypted during take-ownership, the playbook will add the switch to `production.yml` and display instructions for manually adding the password to the vault.
+
+### 4. Configure VLANs
+
+With encrypted vault, use `--ask-vault-pass`:
+
+SG3210:
 ```bash
-# Select switch type
-ansible-playbook playbooks/configure-vlans-sg3210.yml
-ansible-playbook playbooks/configure-vlans-sg3452x.yml
-ansible-playbook playbooks/configure-vlans-sg108e.yml
-ansible-playbook playbooks/configure-vlans-cisco.yml
+ansible-playbook playbooks/configure-vlans-sg3210.yml --ask-vault-pass
 ```
 
-### 4. Additional Features (Managed Switches Only)
+SG3452X:
 ```bash
-# Link Aggregation
-ansible-playbook playbooks/configure-lag-sg3210.yml
+ansible-playbook playbooks/configure-vlans-sg3452x.yml --ask-vault-pass
+```
 
-# Port Security
-ansible-playbook playbooks/configure-port-security-sg3210.yml
+SG108E:
+```bash
+ansible-playbook playbooks/configure-vlans-sg108e.yml --ask-vault-pass
+```
 
-# Backup/Restore
-ansible-playbook playbooks/backup-sg3210.yml
+Cisco:
+```bash
+ansible-playbook playbooks/configure-vlans-cisco.yml --ask-vault-pass
+```
+
+### 5. Additional Features (Managed Switches Only)
+
+Link Aggregation (LAG):
+```bash
+ansible-playbook playbooks/configure-lag-sg3210.yml --ask-vault-pass
+```
+
+```bash
+ansible-playbook playbooks/configure-lag-sg3452x.yml --ask-vault-pass
+```
+
+Port Security:
+```bash
+ansible-playbook playbooks/configure-port-security-sg3210.yml --ask-vault-pass
+```
+
+```bash
+ansible-playbook playbooks/configure-port-security-sg3452x.yml --ask-vault-pass
+```
+
+Backup Configuration:
+```bash
+ansible-playbook playbooks/backup-sg3210.yml --ask-vault-pass
 ```
 
 ## Project Structure
@@ -123,6 +234,7 @@ ansible-playbook playbooks/backup-sg3210.yml
 ansible_collection_tp-link_switches/
 ├── generic_collection/          # Unified playbook layer
 │   ├── playbooks/               # All playbooks (switch-type suffix)
+│   ├── library/                 # Shared modules (inventory_manager)
 │   ├── inventory/               # Central inventory
 │   │   ├── production.yml       # Switch definitions
 │   │   ├── vault.yml            # Passwords (encrypt with ansible-vault)
@@ -136,7 +248,7 @@ ansible_collection_tp-link_switches/
 ├── tp_link_sg3210/
 │   └── library/                 # Python modules (SSH/Expect)
 ├── tp_link_sg3452x/
-│   └── library/                 # Python modules (SSH/Expect)
+│   └── library/                 # Python modules (SSH/Expect + SFP)
 ├── tp_link_sg108e/
 │   └── library/                 # Python modules (UDP)
 ├── cisco/
@@ -157,6 +269,7 @@ ansible_collection_tp-link_switches/
 - Python modules in separate library directories
 - Handles CLI syntax differences
 - Input validation per device type
+- **Idempotent:** Only applies changes when configuration differs
 
 **Layer 1 - Protocols (Hardware-specific):**
 - UDP socket communication (SG108E)
@@ -180,33 +293,63 @@ vlans:
 
 ## Available Modules
 
-### TP-Link SG3210/SG3452X (SSH/Expect)
+### TP-Link SG3210 (SSH/Expect)
 
-| Module | Description |
-|--------|-------------|
-| tp_link_initial_setup | Initial setup via Telnet |
-| tp_link_change_ip | Change management IP |
-| tp_link_batch_vlan_expect | VLAN configuration (add/replace) |
-| tp_link_lag_expect | Link Aggregation (LACP/static) |
-| tp_link_port_security_expect | Port Security with MAC limiting |
-| tp_link_config_backup | Backup/Restore (4 actions) |
-| inventory_manager | Inventory updates |
+| Module | Description | Idempotent |
+|--------|-------------|------------|
+| sg3210_initial_setup | Initial setup via Telnet | - |
+| sg3210_change_ip | Change management IP | - |
+| sg3210_batch_vlan_expect | VLAN configuration (add/replace) | ✅ |
+| sg3210_lag_expect | Link Aggregation (LACP/static) | ✅ |
+| sg3210_port_security_expect | Port Security with MAC limiting | ✅ |
+| sg3210_config_backup | Backup/Restore (4 actions) | - |
+
+### TP-Link SG3452X (SSH/Expect)
+
+| Module | Description | Idempotent |
+|--------|-------------|------------|
+| sg3452x_initial_setup | Initial setup via Telnet | - |
+| sg3452x_change_ip | Change management IP | - |
+| sg3452x_batch_vlan_expect | VLAN configuration (add/replace) | ✅ |
+| sg3452x_lag_expect | Link Aggregation (LACP/static) | ✅ |
+| sg3452x_port_security_expect | Port Security with MAC limiting | ✅ |
+| sg3452x_config_backup | Backup/Restore (4 actions) | - |
+
+**Note:** SG3452X modules support SFP+ ports 49-52 (ten-gigabitEthernet interface type).
+
+### Shared Module
+
+| Module | Description | Idempotent |
+|--------|-------------|------------|
+| inventory_manager | Inventory and vault updates | ✅ |
 
 ### TP-Link SG108E (UDP)
 
-| Module | Description |
-|--------|-------------|
-| sg108e_take_ownership | Set password and IP via UDP |
-| sg108e_vlan | VLAN configuration with delete support |
-| inventory_manager | Inventory updates |
+| Module | Description | Idempotent |
+|--------|-------------|------------|
+| sg108e_take_ownership | Set password and IP via UDP | - |
+| sg108e_vlan | VLAN configuration with delete support | - |
 
 ### Cisco C2924 (Telnet)
 
-| Module | Description |
-|--------|-------------|
-| cisco_take_ownership | Read hardware info |
-| cisco_vlan | VLAN creation and port assignment |
-| cisco_telnet_connection | Shared Telnet class |
+| Module | Description | Idempotent |
+|--------|-------------|------------|
+| cisco_take_ownership | Read hardware info | - |
+| cisco_vlan | VLAN creation and port assignment | - |
+| cisco_telnet_connection | Shared Telnet class | - |
+
+## Idempotency
+
+All VLAN, LAG, and Port Security modules for SG3210 and SG3452X are **idempotent**:
+
+- First run: `changed=true` (configuration applied)
+- Second run: `changed=false` (no changes needed)
+
+This is achieved by:
+1. Fetching current configuration via `show running-config`
+2. Parsing the output to extract current state
+3. Comparing with desired state
+4. Only applying changes if differences exist
 
 ## Network Requirements
 
@@ -238,40 +381,92 @@ network:
 
 ## Security Considerations
 
-**Password Management:**
-- Use Ansible Vault for production: `ansible-vault encrypt inventory/vault.yml`
-- Never store passwords in playbooks or production.yml
+### Password Management
 
-**Protocol Security:**
+Encrypt vault for production:
+```bash
+ansible-vault encrypt inventory/vault.yml
+```
+
+Run playbooks with vault password:
+```bash
+ansible-playbook playbooks/configure-vlans-sg3210.yml --ask-vault-pass
+```
+
+**Important:** Never store passwords in playbooks or production.yml.
+
+### Vault Workflow for Take-Ownership
+
+Since Ansible Vault cannot be written to programmatically when encrypted:
+
+1. **Option A:** Decrypt vault before take-ownership
+   ```bash
+   ansible-vault decrypt inventory/vault.yml
+   ansible-playbook playbooks/take-ownership-sg3210.yml
+   ansible-vault encrypt inventory/vault.yml
+   ```
+
+2. **Option B:** Add password manually after take-ownership
+   ```bash
+   ansible-playbook playbooks/take-ownership-sg3210.yml
+   # Follow the displayed instructions
+   ansible-vault edit inventory/vault.yml
+   # Add: switch-name: "password"
+   ```
+
+### Protocol Security
+
 - SSH used for TP-Link Managed after initial setup
 - Telnet only for Cisco (no SSH support) and initial TP-Link setup
 - UDP communication (SG108E) is unencrypted - use isolated network
 
-**Out-of-Band Access:**
+### Out-of-Band Access
+
 - Always maintain console access for recovery
 - Network automation can lock you out if misconfigured
 
 ## Troubleshooting
 
 ### SSH Connection Timeout (SG3210/SG3452X)
+
+Verify connectivity:
 ```bash
-# Verify connectivity
 ping 10.0.10.1
+```
+
+Test SSH connection:
+```bash
 ssh admin@10.0.10.1
 ```
 
 ### UDP No Response (SG108E)
+
+Check you're in same L2 segment. Verify MAC address matches switch label.
+
+Check netifaces is installed:
 ```bash
-# Check you're in same L2 segment
-# Verify MAC address matches switch label
-# Check netifaces is installed
 python3 -c "import netifaces; print('OK')"
 ```
 
 ### Telnet Connection Refused (Cisco)
+
+Cisco requires console pre-configuration.
+
+Connect via serial:
 ```bash
-# Cisco requires console pre-configuration
-# Connect via serial: sudo minicom -D /dev/ttyUSB0 -b 9600
+sudo minicom -D /dev/ttyUSB0 -b 9600
+```
+
+### Module Not Found
+
+Verify library path in ansible.cfg:
+```bash
+cat ansible.cfg | grep library
+```
+
+Should show:
+```
+library = ./library:../tp_link_sg3210/library:../tp_link_sg3452x/library:...
 ```
 
 ## Development
@@ -282,6 +477,7 @@ This project was developed as part of an academic thesis on network automation.
 - Standard Python SSH libraries (paramiko, netmiko) fail with TP-Link Managed switches
 - Expect-based PTY emulation required for stable CLI interaction
 - Protocol abstraction enables unified management of heterogeneous networks
+- Idempotency requires parsing switch-specific running-config output
 
 ## License
 

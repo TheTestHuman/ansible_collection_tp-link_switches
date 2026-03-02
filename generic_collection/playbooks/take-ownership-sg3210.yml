@@ -271,9 +271,26 @@
       debug:
         msg: "✓ {{ inventory_result.message }}"
       when: 
+
+    - name: "STAGE 3: Zeige Vault-Warnung"
+      debug:
+        msg: |
+          ⚠️  VAULT-WARNUNG
+          ═══════════════════════════════════════════════════════════
+          {{ inventory_result.vault_warning }}
+      when:
+        - inventory_result.vault_warning is defined
         - update_inventory | lower == "yes"
+
+    - name: "STAGE 3: Zeige Vault-Warnung"
+      debug:
+        msg: |
+          ⚠️  VAULT-WARNUNG
+          ═══════════════════════════════════════════════════════════
+          {{ inventory_result.vault_warning }}
+      when:
+        - inventory_result.vault_warning is defined
         - inventory_result is defined
-        - inventory_result.changed | default(false)
 
     # =========================================================================
     # ZUSAMMENFASSUNG

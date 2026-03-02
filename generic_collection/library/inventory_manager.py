@@ -150,9 +150,11 @@ def configs_are_equal(current, new):
 class VaultManager:
     """Verwaltet die vault.yml Datei"""
     
-    def __init__(self, vault_path):
+    def __init__(self, vault_path, switch_name=None):
         self.vault_path = os.path.abspath(vault_path)
         self.vault = None
+        self.is_encrypted = False
+        self.switch_name = switch_name  # Für bessere Fehlermeldungen
         self._load()
     
     def _load(self):
@@ -169,7 +171,14 @@ class VaultManager:
             content = f.read()
             
         if content.startswith('$ANSIBLE_VAULT'):
-            raise ValueError("vault.yml is encrypted. Please decrypt first or use --ask-vault-pass")
+            self.is_encrypted = True
+            # Wir setzen leere Defaults - beim Schreiben wird dann ein Fehler geworfen
+            self.vault = {
+                'vault_default_username': 'admin',
+                'vault_default_password': 'neinnein',
+                'vault_passwords': {}
+            }
+            return
         
         self.vault = yaml.safe_load(content) or {}
         
@@ -221,7 +230,21 @@ class VaultManager:
         """
         Passwort für einen Switch setzen.
         Returns: True wenn geändert, False wenn identisch
+        Raises: ValueError wenn Vault verschlüsselt ist
         """
+        if self.is_encrypted:
+            raise ValueError(
+                f"Vault ist verschlüsselt - Passwort für '{switch_name}' kann nicht gespeichert werden!\n\n"
+                "Option 1 - Passwort manuell eintragen:\n"
+                "  ansible-vault edit inventory/vault.yml\n\n"
+                "  Füge unter 'vault_passwords:' hinzu:\n"
+                f"    {switch_name}: \"{password}\"\n\n"
+                "Option 2 - Vault vor Take-Ownership entschlüsseln:\n"
+                "  ansible-vault decrypt inventory/vault.yml\n"
+                "  # Playbook erneut ausführen\n"
+                "  ansible-vault encrypt inventory/vault.yml"
+            )
+        
         if self.vault['vault_passwords'] is None:
             self.vault['vault_passwords'] = {}
         
@@ -524,16 +547,25 @@ def run_module():
             
             # Passwort in Vault speichern (nur wenn sich geändert hat)
             if vault_manager and switch_password:
-                vault_changed = vault_manager.set_password(switch_name, switch_password)
-                if vault_changed:
-                    result['vault_updated'] = True
-                    result['changed'] = True
-                    if not changed:
-                        result['message'] = f"Switch '{switch_name}' unchanged, but password updated in vault."
+                try:
+                    vault_changed = vault_manager.set_password(switch_name, switch_password)
+                    if vault_changed:
+                        result['vault_updated'] = True
+                        result['changed'] = True
+                        if not changed:
+                            result['message'] = f"Switch '{switch_name}' unchanged, but password updated in vault."
+                except ValueError as vault_error:
+                    # Vault ist verschlüsselt - Warnung statt Fehler
+                    result['vault_encrypted'] = True
+                    result['vault_warning'] = str(vault_error)
+                    # Warnung zur Message hinzufügen aber nicht fehlschlagen
+                    result['message'] = (
+                        f"✓ Switch '{switch_name}' erfolgreich in production.yml eingetragen.\n\n"
+                        f"⚠ WARNUNG: {vault_error}"
+                    )
+                    # changed bleibt True wegen production.yml Update
             
     except FileNotFoundError as e:
-        module.fail_json(msg=str(e), **result)
-    except ValueError as e:
         module.fail_json(msg=str(e), **result)
     except Exception as e:
         module.fail_json(msg=f"ERROR_INVENTORY_MANAGER: {str(e)}", **result)
